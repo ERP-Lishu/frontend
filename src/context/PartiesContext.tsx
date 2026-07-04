@@ -13,7 +13,7 @@ interface PartiesCtx {
   parties: Party[];
   isLoading: boolean;
   addParty: (p: Party) => Promise<void>;
-  deleteParty: (id: string) => void;
+  deleteParty: (id: string) => Promise<void>;
   updateParty: (id: string, updated: Party) => void;
 }
 
@@ -29,8 +29,8 @@ export function PartiesProvider({ children }: { children: React.ReactNode }) {
     await createMutation.mutateAsync(p);
   }
 
-  function deleteParty(id: string) {
-    deleteMutation.mutate(id);
+  async function deleteParty(id: string) {
+    await deleteMutation.mutateAsync(id);
   }
 
   function updateParty(id: string, updated: Party) {

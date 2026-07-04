@@ -8,6 +8,8 @@ import {
   updateInventoryApi,
   deleteInventoryApi,
   apiInventoryToLocal,
+  saveVariantsLocally,
+  deleteVariantsLocally,
 } from "@/lib/api/inventory";
 
 export const INVENTORY_KEY = ["inventory"] as const;
@@ -27,7 +29,19 @@ export function useCreateInventoryItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: createInventoryApi,
-    onSuccess: () => qc.invalidateQueries({ queryKey: INVENTORY_KEY }),
+    onSuccess: (apiItem, localItem) => {
+      saveVariantsLocally(apiItem.id, localItem);
+      qc.setQueryData<InventoryItem[]>(INVENTORY_KEY, (prev = []) => [
+        ...prev,
+        {
+          ...apiInventoryToLocal(apiItem),
+          variants: localItem.variants,
+          varLabels: localItem.varLabels,
+          images: localItem.images,
+          color: localItem.color,
+        },
+      ]);
+    },
   });
 }
 
@@ -36,7 +50,22 @@ export function useUpdateInventoryItem() {
   return useMutation({
     mutationFn: ({ id, item }: { id: string; item: InventoryItem }) =>
       updateInventoryApi(id, item),
-    onSuccess: () => qc.invalidateQueries({ queryKey: INVENTORY_KEY }),
+    onSuccess: (apiItem, { item: localItem }) => {
+      saveVariantsLocally(apiItem.id, localItem);
+      qc.setQueryData<InventoryItem[]>(INVENTORY_KEY, (prev = []) =>
+        prev.map((existing) =>
+          existing.id === apiItem.id
+            ? {
+                ...apiInventoryToLocal(apiItem),
+                variants: localItem.variants,
+                varLabels: localItem.varLabels,
+                images: localItem.images,
+                color: localItem.color,
+              }
+            : existing
+        )
+      );
+    },
   });
 }
 
@@ -44,6 +73,9 @@ export function useDeleteInventoryItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: deleteInventoryApi,
-    onSuccess: () => qc.invalidateQueries({ queryKey: INVENTORY_KEY }),
+    onSuccess: (_, id) => {
+      deleteVariantsLocally(id);
+      qc.invalidateQueries({ queryKey: INVENTORY_KEY });
+    },
   });
 }

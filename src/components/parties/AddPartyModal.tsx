@@ -38,7 +38,7 @@ export function AddPartyModal({
       setOpeningBal(""); // Don't pre-fill opening balance; let user enter it if they want to change it, otherwise we'll keep the existing amt as-is.
       setBalType(initialParty.g ? "r" : "g");
       setPartyType("c");
-      setTab("cr");
+      setTab("ad");
       setNameError(false);
       setEmail(initialParty.email ?? "");
       setAddress(initialParty.address ?? "");
@@ -222,7 +222,7 @@ export function AddPartyModal({
 
           {/* Tabs */}
           <div className="flex border-b border-[#f0f0f0] mb-4">
-            {(["cr", "ad"] as const).map((t) => (
+            {(isEdit ? (["ad"] as const) : (["cr", "ad"] as const)).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -233,7 +233,7 @@ export function AddPartyModal({
             ))}
           </div>
 
-          {tab === "cr" && (
+          {tab === "cr" && !isEdit && (
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[12px] text-gray-600 font-medium">

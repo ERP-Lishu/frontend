@@ -109,9 +109,9 @@ export function CreatePurchaseBillPage() {
   }, []);
 
   const subTotal = rows.reduce((s, r) => s + calcRow(r), 0);
-  const discountRs = discPct ? (subTotal * (parseFloat(discPct) || 0)) / 100 : parseFloat(discAmt) || 0;
+  const discountRs = showDiscount ? (discPct ? (subTotal * (parseFloat(discPct) || 0)) / 100 : parseFloat(discAmt) || 0) : 0;
   const taxRate = taxType === "VAT 13%" ? 0.13 : taxType === "VAT 5%" ? 0.05 : 0;
-  const taxAmt = (subTotal - discountRs) * taxRate;
+  const taxAmt = showTax ? (subTotal - discountRs) * taxRate : 0;
   const totalAmount = subTotal - discountRs + taxAmt;
   const paidNum = paidEnabled ? (parseFloat(paidAmt) || 0) : 0;
   const balanceDue = totalAmount - paidNum;

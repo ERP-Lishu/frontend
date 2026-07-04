@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, KeyboardEvent } from "react";
-import { ArrowLeft, BellRing, ImagePlus, Info, Plus, Settings, Trash2, X } from "lucide-react";
+import { ArrowLeft, BellRing, Check, ImagePlus, Info, Plus, Settings, Trash2, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useInventory } from "@/context/InventoryContext";
 
@@ -65,58 +65,79 @@ function VariationRow({
     }
   }
 
+  const valuePlaceholder = (() => {
+    const lbl = variation.label.trim().toLowerCase();
+    if (lbl === "color") return "e.g. Red, Blue, Black…";
+    if (lbl === "size") return "e.g. S, M, L, XL…";
+    if (lbl === "material") return "e.g. Cotton, Silk, Linen…";
+    return "Type a value and press Enter…";
+  })();
+
   return (
-    <div className="border border-[#e8e8e8] rounded-xl p-4 bg-white group">
-      <div className="flex items-center gap-2 mb-3">
-        <input
-          className="flex-1 text-[13px] font-semibold text-[#1a1a1a] outline-none border-b border-transparent focus:border-[#29ad82] pb-0.5 bg-transparent placeholder:text-gray-300 placeholder:font-normal"
-          placeholder="Variation name (e.g. Size, Color, Material…)"
-          value={variation.label}
-          onChange={(e) => onChange({ ...variation, label: e.target.value })}
-        />
+    <div className="border border-[#e8e8e8] rounded-xl overflow-hidden bg-white group">
+      {/* Variation type name */}
+      <div className="flex items-start gap-2 px-4 pt-3 pb-3 border-b border-[#f3f3f3]">
+        <div className="flex-1">
+          <p className="text-[10.5px] text-gray-400 font-medium mb-1.5 uppercase tracking-wide">
+            Variation Type <span className="normal-case text-gray-300 font-normal">(name it, e.g. Size or Color)</span>
+          </p>
+          <input
+            className="w-full text-[13px] font-semibold text-[#1a1a1a] outline-none border border-[#e5e5e5] rounded-lg px-2.5 py-1.5 bg-[#f9f9f9] focus:border-[#29ad82] focus:bg-white transition-colors placeholder:text-gray-300 placeholder:font-normal"
+            placeholder="e.g. Size, Color, Material…"
+            value={variation.label}
+            onChange={(e) => onChange({ ...variation, label: e.target.value })}
+          />
+        </div>
         <button
           onClick={onRemove}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-400 p-0.5"
+          className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-400 p-1 flex-shrink-0 mt-6"
         >
           <Trash2 size={14} />
         </button>
       </div>
-      <div
-        className="flex flex-wrap gap-1.5 min-h-[36px] border border-[#e5e5e5] rounded-lg px-2.5 py-1.5 cursor-text bg-[#f9f9f9] focus-within:border-[#29ad82] focus-within:bg-white transition-colors"
-        onClick={() => inputRef.current?.focus()}
-      >
-        {variation.values.map((v) => (
-          <span
-            key={v}
-            className="inline-flex items-center gap-1 bg-[#edfaf4] text-[#29ad82] border border-[#c6e8d6] rounded-md px-2 py-0.5 text-[12px] font-medium"
-          >
-            {v}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange({ ...variation, values: variation.values.filter((x) => x !== v) });
-              }}
-              className="text-[#29ad82] hover:text-[#1d9470] leading-none"
-            >
-              <X size={10} />
-            </button>
-          </span>
-        ))}
-        <input
-          ref={inputRef}
-          className="flex-1 min-w-[100px] text-[12.5px] outline-none bg-transparent placeholder:text-gray-300"
-          placeholder={variation.values.length === 0 ? "Type a value and press Enter…" : "Add more…"}
-          value={variation.draft}
-          onChange={(e) => onChange({ ...variation, draft: e.target.value })}
-          onKeyDown={handleKeyDown}
-          onBlur={commitDraft}
-        />
-      </div>
-      {variation.values.length > 0 && (
-        <p className="text-[10.5px] text-gray-300 mt-1.5">
-          Press Enter or comma to add · Backspace to remove last
+
+      {/* Values */}
+      <div className="px-4 py-3">
+        <p className="text-[10.5px] text-gray-400 font-medium mb-1.5 uppercase tracking-wide">
+          Values <span className="normal-case text-gray-300 font-normal">(add one at a time, press Enter)</span>
         </p>
-      )}
+        <div
+          className="flex flex-wrap gap-1.5 min-h-[38px] border border-[#e5e5e5] rounded-lg px-2.5 py-1.5 cursor-text bg-[#f9f9f9] focus-within:border-[#29ad82] focus-within:bg-white transition-colors"
+          onClick={() => inputRef.current?.focus()}
+        >
+          {variation.values.map((v) => (
+            <span
+              key={v}
+              className="inline-flex items-center gap-1 bg-[#edfaf4] text-[#29ad82] border border-[#c6e8d6] rounded-md px-2 py-0.5 text-[12px] font-medium"
+            >
+              {v}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange({ ...variation, values: variation.values.filter((x) => x !== v) });
+                }}
+                className="text-[#29ad82] hover:text-[#1d9470] leading-none"
+              >
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+          <input
+            ref={inputRef}
+            className="flex-1 min-w-[120px] text-[12.5px] outline-none bg-transparent placeholder:text-gray-300"
+            placeholder={variation.values.length === 0 ? valuePlaceholder : "Add more…"}
+            value={variation.draft}
+            onChange={(e) => onChange({ ...variation, draft: e.target.value })}
+            onKeyDown={handleKeyDown}
+            onBlur={commitDraft}
+          />
+        </div>
+        {variation.values.length > 0 && (
+          <p className="text-[10.5px] text-gray-400 mt-1.5">
+            {variation.values.length} value{variation.values.length !== 1 ? "s" : ""} · Press Enter or comma to add more · Backspace to remove last
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -129,8 +150,7 @@ export function AddItemPage() {
   const isEdit = !!editCode;
 
   const [itemType, setItemType] = useState<"product" | "service">("product");
-  const [activeTab, setActiveTab] = useState<"stock" | "variation" | "location" | "others">("stock");
-  const [selectedLocations, setSelectedLocations] = useState<string[]>(["Main Warehouse"]);
+  const [activeTab, setActiveTab] = useState<"stock" | "variation" | "others">("stock");
   const [lsaOn, setLsaOn] = useState(false);
   const [variations, setVariations] = useState<Variation[]>([]);
   const [variantRows, setVariantRows] = useState<Record<string, VariantRow>>({});
@@ -218,22 +238,57 @@ export function AddItemPage() {
     const inherited = pendingStocks.current;
     if (inherited) pendingStocks.current = null; // consume once
     setVariantRows((prev) => {
+      const prevRows = Object.values(prev);
+      // The very first variant row is auto-filled from the Stock Details prices
+      // so the user doesn't have to retype what they already entered.
+      const isFirstBuild = !isEdit && prevRows.length === 0;
       const next: Record<string, VariantRow> = {};
-      for (const combo of combos) {
+      combos.forEach((combo, idx) => {
         const key = combo.join("|");
         if (prev[key]) {
           next[key] = prev[key];
-        } else {
-          const stock = inherited?.[key] ?? "";
-          next[key] = { key, combo, sku: "", salesPrice: "", purchasePrice: "", stock };
+          return;
         }
-      }
+        // Adding/removing a variation type reshapes every combo key (e.g. "S"
+        // becomes "S|Blue"), so an exact key match never happens here even
+        // though the row conceptually still exists. Fall back to the closest
+        // previous row (shared leading values) so sku/price/stock the user
+        // already typed for the shorter combo carries over instead of
+        // resetting to blank.
+        const source = prevRows.find((r) => {
+          const len = Math.min(r.combo.length, combo.length);
+          for (let i = 0; i < len; i++) if (r.combo[i] !== combo[i]) return false;
+          return true;
+        });
+        const stock = inherited?.[key] ?? source?.stock ?? "";
+        const isFirstRow = isFirstBuild && idx === 0;
+        next[key] = {
+          key,
+          combo,
+          sku: source?.sku ?? "",
+          salesPrice: source ? source.salesPrice : isFirstRow ? salesPrice : "",
+          purchasePrice: source ? source.purchasePrice : isFirstRow ? purchasePrice : "",
+          stock,
+        };
+      });
       return next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variations]);
 
   function updateVariantRow(key: string, field: keyof Omit<VariantRow, "key" | "combo">, value: string) {
     setVariantRows((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+  }
+
+  function fillAllRows(field: "salesPrice" | "purchasePrice") {
+    const value = sortedVariantRows[0]?.[field] ?? "";
+    setVariantRows((prev) => {
+      const next: Record<string, VariantRow> = {};
+      for (const key of Object.keys(prev)) {
+        next[key] = { ...prev[key], [field]: value };
+      }
+      return next;
+    });
   }
 
   function addVariation() {
@@ -245,6 +300,12 @@ export function AddItemPage() {
 
   const sortedVariantRows = Object.values(variantRows);
 
+  // Stock details and variant stock are mutually exclusive: once the user has
+  // entered at least one variation value, item-level Opening Stock/Sales
+  // Price/Purchase Price are shown empty and locked — stock lives on the
+  // variants instead. Reverting to no variations un-locks them again.
+  const hasVariants = variations.some((v) => v.values.length > 0);
+
   function handleSave(andNew = false) {
     if (!itemName.trim()) { setNameError(true); return; }
     const words = itemName.trim().split(" ");
@@ -254,18 +315,41 @@ export function AddItemPage() {
     const avatarColors = ["#29ad82","#1565c0","#5d4037","#6d1c2e","#6a1b9a","#e65100","#00695c","#ad1457"];
     const color = editColor ?? avatarColors[Math.floor(Math.random() * avatarColors.length)];
 
-    const filledVariations = variations.filter((v) => v.values.length > 0);
-    const varLabels = filledVariations.length > 0 ? filledVariations.map((v) => v.label || `Variation ${filledVariations.indexOf(v) + 1}`) : undefined;
+    // Flush any half-typed value still sitting in a values input (user didn't press
+    // Enter before clicking Save) so it isn't silently dropped from the combinations.
+    const effectiveVariations = variations.map((v) => {
+      const draft = v.draft.trim();
+      if (draft && !v.values.includes(draft)) {
+        return { ...v, values: [...v.values, draft], draft: "" };
+      }
+      return { ...v, draft: "" };
+    });
 
-    const variantList = sortedVariantRows.length > 0
-      ? sortedVariantRows.map((r) => ({
-          size: r.combo[0] || "",   // slot 0 — whatever the first variation type is
-          color: r.combo[1] || "",  // slot 1 — whatever the second variation type is
-          stock: parseInt(r.stock) || 0,
-        }))
+    const filledVariations = effectiveVariations.filter((v) => v.values.length > 0);
+    const varLabels = filledVariations.length > 0 ? filledVariations.map((v, i) => v.label || `Variation ${i + 1}`) : undefined;
+
+    // Always regenerate the full cartesian of all entered values, reusing any
+    // stock/price the user already typed for existing combinations.
+    const combos = cartesian(filledVariations.map((v) => v.values));
+    const variantList = combos.length > 0
+      ? combos.map((combo) => {
+          const existing = variantRows[combo.join("|")];
+          return {
+            size: combo[0] || "",   // slot 0 — first variation type
+            color: combo[1] || "",  // slot 1 — second variation type
+            sku: existing?.sku?.trim() || undefined,
+            salesPrice: existing?.salesPrice ? parseInt(existing.salesPrice) || 0 : undefined,
+            purchasePrice: existing?.purchasePrice ? parseInt(existing.purchasePrice) || 0 : undefined,
+            stock: parseInt(existing?.stock ?? "") || 0,
+          };
+        })
       : undefined;
 
-    // If variants exist, total qty = sum of variant stocks; otherwise use opening stock field
+    // If variants exist, item-level stock/price are cleared — total qty is the
+    // sum of variant stocks, and sale/purchase are not tracked at item level
+    // (the backend forces these to 0 on the parent record once variants
+    // exist; the item page instead derives its Sales/Purchase Price display
+    // from the first variant, see apiInventoryToLocal).
     const totalQty = variantList
       ? variantList.reduce((sum, v) => sum + v.stock, 0)
       : qty;
@@ -276,8 +360,8 @@ export function AddItemPage() {
       cat: itemCat,
       type: itemType === "product" ? "Product" : "Service",
       code,
-      sale: salesPrice ? `Rs. ${parseInt(salesPrice).toLocaleString("en-US")}` : "Rs. 0",
-      purchase: purchasePrice ? `Rs. ${parseInt(purchasePrice).toLocaleString("en-US")}` : "Rs. 0",
+      sale: variantList ? "Rs. 0" : (salesPrice ? `Rs. ${parseInt(salesPrice).toLocaleString("en-US")}` : "Rs. 0"),
+      purchase: variantList ? "Rs. 0" : (purchasePrice ? `Rs. ${parseInt(purchasePrice).toLocaleString("en-US")}` : "Rs. 0"),
       qty: totalQty,
       low: lsaOn,
       critical: totalQty === 0,
@@ -297,7 +381,7 @@ export function AddItemPage() {
         setItemName(""); setItemCat("General"); setOpeningStock(""); setSalesPrice("");
         setPurchasePrice(""); setItemCode(""); setLsaOn(false);
         setVariations([]); setVariantRows({}); setActiveTab("stock"); setNameError(false);
-        setSelectedLocations(["Main Warehouse"]); setEditColor(undefined); setImages([]);
+        setEditColor(undefined); setImages([]);
       } else {
         router.push("/inventory");
       }
@@ -377,7 +461,7 @@ export function AddItemPage() {
           {/* Tabs */}
           <div className="border-b border-[#f0f0f0]">
             <div className="flex gap-1">
-              {([["stock", "Stock Details"], ["variation", "Variation"], ["location", "Location"], ["others", "Others"]] as const).map(([t, label]) => (
+              {([["stock", "Stock Details"], ["variation", "Variation"], ["others", "Others"]] as const).map(([t, label]) => (
                 <button
                   key={t}
                   onClick={() => setActiveTab(t)}
@@ -391,9 +475,7 @@ export function AddItemPage() {
                   {t === "variation" && variations.length > 0 && (
                     <span className="ml-1.5 text-[10px] bg-[#29ad82] text-white rounded-full px-1.5 py-0.5">{variations.length}</span>
                   )}
-                  {t === "location" && selectedLocations.length > 0 && (
-                    <span className="ml-1.5 text-[10px] bg-[#29ad82] text-white rounded-full px-1.5 py-0.5">{selectedLocations.length}</span>
-                  )}
+
                 </button>
               ))}
             </div>
@@ -408,15 +490,16 @@ export function AddItemPage() {
                   <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">
                     Opening Stock
                     {isEdit && <span className="ml-1.5 text-[10.5px] text-gray-400 font-normal">(use Adjust Stock to change)</span>}
+                    {!isEdit && hasVariants && <span className="ml-1.5 text-[10.5px] text-gray-400 font-normal">(tracked per variant)</span>}
                   </label>
                   <input
-                    className={`${inputCls} ${isEdit ? "bg-[#f5f5f5] text-gray-400 cursor-not-allowed" : ""}`}
-                    placeholder="0"
+                    className={`${inputCls} ${isEdit || hasVariants ? "bg-[#f5f5f5] text-gray-400 cursor-not-allowed" : ""}`}
+                    placeholder={hasVariants ? "Set in Variation tab" : "0"}
                     type="number"
-                    value={openingStock}
-                    onChange={(e) => { if (!isEdit) setOpeningStock(e.target.value); }}
-                    readOnly={isEdit}
-                    disabled={isEdit}
+                    value={hasVariants ? "" : openingStock}
+                    onChange={(e) => { if (!isEdit && !hasVariants) setOpeningStock(e.target.value); }}
+                    readOnly={isEdit || hasVariants}
+                    disabled={isEdit || hasVariants}
                   />
                 </div>
                 <div>
@@ -434,17 +517,39 @@ export function AddItemPage() {
               {/* Sales Price + Purchase Price */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">Sales Price</label>
-                  <div className="flex items-center border border-[#e5e5e5] rounded-xl overflow-hidden focus-within:border-[#29ad82]">
+                  <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">
+                    Sales Price
+                    {hasVariants && <span className="ml-1.5 text-[10.5px] text-gray-400 font-normal">(tracked per variant)</span>}
+                  </label>
+                  <div className={`flex items-center border rounded-xl overflow-hidden ${hasVariants ? "border-[#e5e5e5] bg-[#f5f5f5]" : "border-[#e5e5e5] focus-within:border-[#29ad82]"}`}>
                     <span className="pl-3.5 pr-1 text-[13px] text-gray-400 select-none">Rs.</span>
-                    <input className="flex-1 pr-3.5 py-2.5 text-[13px] outline-none bg-white" placeholder="0" type="number" value={salesPrice} onChange={(e) => setSalesPrice(e.target.value)} />
+                    <input
+                      className={`flex-1 pr-3.5 py-2.5 text-[13px] outline-none bg-transparent ${hasVariants ? "text-gray-400 cursor-not-allowed" : ""}`}
+                      placeholder={hasVariants ? "Set in Variation tab" : "0"}
+                      type="number"
+                      value={hasVariants ? "" : salesPrice}
+                      onChange={(e) => { if (!hasVariants) setSalesPrice(e.target.value); }}
+                      readOnly={hasVariants}
+                      disabled={hasVariants}
+                    />
                   </div>
                 </div>
                 <div>
-                  <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">Purchase Price</label>
-                  <div className="flex items-center border border-[#e5e5e5] rounded-xl overflow-hidden focus-within:border-[#29ad82]">
+                  <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">
+                    Purchase Price
+                    {hasVariants && <span className="ml-1.5 text-[10.5px] text-gray-400 font-normal">(tracked per variant)</span>}
+                  </label>
+                  <div className={`flex items-center border rounded-xl overflow-hidden ${hasVariants ? "border-[#e5e5e5] bg-[#f5f5f5]" : "border-[#e5e5e5] focus-within:border-[#29ad82]"}`}>
                     <span className="pl-3.5 pr-1 text-[13px] text-gray-400 select-none">Rs.</span>
-                    <input className="flex-1 pr-3.5 py-2.5 text-[13px] outline-none bg-white" placeholder="0" type="number" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} />
+                    <input
+                      className={`flex-1 pr-3.5 py-2.5 text-[13px] outline-none bg-transparent ${hasVariants ? "text-gray-400 cursor-not-allowed" : ""}`}
+                      placeholder={hasVariants ? "Set in Variation tab" : "0"}
+                      type="number"
+                      value={hasVariants ? "" : purchasePrice}
+                      onChange={(e) => { if (!hasVariants) setPurchasePrice(e.target.value); }}
+                      readOnly={hasVariants}
+                      disabled={hasVariants}
+                    />
                   </div>
                 </div>
               </div>
@@ -543,7 +648,7 @@ export function AddItemPage() {
                     <Plus size={18} className="text-[#29ad82]" />
                   </div>
                   <p className="text-[13px] font-medium text-[#1a1a1a] mb-1">No variations yet</p>
-                  <p className="text-[12px] text-gray-400 mb-4">Add variation types like Size, Color, Material, or anything custom.</p>
+                  <p className="text-[12px] text-gray-400 mb-4">Add a variation type (e.g. <b>Size</b>) then enter its values (e.g. <b>S, M, L, XL</b>).</p>
                   <button onClick={addVariation} className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[#29ad82] border border-[#29ad82] rounded-xl px-4 py-2 hover:bg-[#edfaf4] transition-colors">
                     <Plus size={13} /> Add Variation Type
                   </button>
@@ -574,9 +679,31 @@ export function AddItemPage() {
                       </div>
                       <div className="border border-[#e8e8e8] rounded-xl overflow-hidden">
                         <div className="grid grid-cols-[2fr_1.5fr_1.2fr_1.2fr_0.8fr] bg-[#f7f7f7] border-b border-[#e8e8e8] px-4 py-2.5">
-                          {["Variant", "SKU", "Sales Price", "Purchase Price", isEdit ? "Stock (locked)" : "Stock"].map((h) => (
-                            <span key={h} className={`text-[11.5px] font-semibold ${h === "Stock (locked)" ? "text-gray-300" : "text-gray-500"}`}>{h}</span>
-                          ))}
+                          <span className="text-[11.5px] font-semibold text-gray-500">Variant</span>
+                          <span className="text-[11.5px] font-semibold text-gray-500">SKU</span>
+                          <span className="text-[11.5px] font-semibold text-gray-500 flex items-center gap-1">
+                            Sales Price
+                            <button
+                              type="button"
+                              onClick={() => fillAllRows("salesPrice")}
+                              title="Fill this sales price for all variants"
+                              className="text-gray-300 hover:text-[#29ad82] transition-colors flex-shrink-0"
+                            >
+                              <Check size={12} />
+                            </button>
+                          </span>
+                          <span className="text-[11.5px] font-semibold text-gray-500 flex items-center gap-1">
+                            Purchase Price
+                            <button
+                              type="button"
+                              onClick={() => fillAllRows("purchasePrice")}
+                              title="Fill this purchase price for all variants"
+                              className="text-gray-300 hover:text-[#29ad82] transition-colors flex-shrink-0"
+                            >
+                              <Check size={12} />
+                            </button>
+                          </span>
+                          <span className={`text-[11.5px] font-semibold ${isEdit ? "text-gray-300" : "text-gray-500"}`}>{isEdit ? "Stock (locked)" : "Stock"}</span>
                         </div>
                         {sortedVariantRows.map((row, idx) => {
                           const dot = getColorDot(row.combo);
@@ -612,61 +739,6 @@ export function AddItemPage() {
                   )}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* ── Location ── */}
-          {activeTab === "location" && (
-            <div className="space-y-4">
-              <p className="text-[12.5px] text-gray-400">Select the warehouses or stores where this item is stocked.</p>
-              {[
-                { icon: "🏭", name: "Main Warehouse", desc: "Primary storage facility" },
-                { icon: "🔧", name: "Factory Floor", desc: "Production area stock" },
-                { icon: "📦", name: "Godown B", desc: "Secondary storage" },
-                { icon: "👗", name: "Showroom", desc: "Display & retail stock" },
-              ].map((loc) => {
-                const checked = selectedLocations.includes(loc.name);
-                return (
-                  <div
-                    key={loc.name}
-                    onClick={() =>
-                      setSelectedLocations((prev) =>
-                        checked ? prev.filter((l) => l !== loc.name) : [...prev, loc.name]
-                      )
-                    }
-                    className={`flex items-center gap-4 border rounded-xl px-4 py-3.5 cursor-pointer transition-all ${
-                      checked
-                        ? "border-[#29ad82] bg-[#edfaf4]"
-                        : "border-[#e5e5e5] hover:border-[#29ad82] hover:bg-[#f9fef9]"
-                    }`}
-                  >
-                    <span className="text-2xl">{loc.icon}</span>
-                    <div className="flex-1">
-                      <div className="text-[13.5px] font-semibold text-[#1a1a1a]">{loc.name}</div>
-                      <div className="text-[12px] text-gray-400 mt-0.5">{loc.desc}</div>
-                    </div>
-                    <div
-                      className={`w-5 h-5 rounded-md border-[1.5px] flex items-center justify-center flex-shrink-0 transition-colors ${
-                        checked ? "bg-[#29ad82] border-[#29ad82]" : "border-[#d0d0d0] bg-white"
-                      }`}
-                    >
-                      {checked && (
-                        <svg width="11" height="8" viewBox="0 0 11 8" fill="none">
-                          <path d="M1 4l3 3 6-6" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Add new location hint */}
-              <button className="flex items-center gap-2 text-[12.5px] text-[#29ad82] font-medium hover:opacity-75 transition-opacity">
-                <div className="w-5 h-5 rounded-md border border-dashed border-[#29ad82] flex items-center justify-center">
-                  <Plus size={11} />
-                </div>
-                Add New Location
-              </button>
             </div>
           )}
 

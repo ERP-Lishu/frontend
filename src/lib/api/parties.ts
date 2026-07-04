@@ -1,6 +1,35 @@
 import type { Party } from "@/lib/types";
 import apiClient from "./client";
 
+const PARTY_STORE_KEY = "soch_party_balances";
+
+interface PartyBalanceStore {
+  [partyId: string]: { amt: string; g: boolean };
+}
+
+export function savePartyBalanceLocally(partyId: string, amt: string, g: boolean) {
+  try {
+    const store: PartyBalanceStore = JSON.parse(localStorage.getItem(PARTY_STORE_KEY) || "{}");
+    store[partyId] = { amt, g };
+    localStorage.setItem(PARTY_STORE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
+export function loadPartyBalanceLocally(partyId: string) {
+  try {
+    const store: PartyBalanceStore = JSON.parse(localStorage.getItem(PARTY_STORE_KEY) || "{}");
+    return store[partyId] ?? null;
+  } catch { return null; }
+}
+
+export function deletePartyBalanceLocally(partyId: string) {
+  try {
+    const store: PartyBalanceStore = JSON.parse(localStorage.getItem(PARTY_STORE_KEY) || "{}");
+    delete store[partyId];
+    localStorage.setItem(PARTY_STORE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
 export interface PartyApiResponse {
   id: string;
   fullName: string;
@@ -63,20 +92,26 @@ export async function deletePartyApi(id: string): Promise<void> {
 }
 
 export function apiPartyToLocal(p: PartyApiResponse): Party {
-  const bal = p.openingBalance ?? 0;
   const words = p.fullName.trim().split(" ");
   const init =
     words
       .map((w) => w[0]?.toUpperCase() ?? "")
       .join("")
       .slice(0, 2) || "??";
+
+  // Prefer locally stored balance if API returns 0 (backend may not persist it)
+  const local = loadPartyBalanceLocally(p.id);
+  const apiBal = p.openingBalance ?? 0;
+  const amt = local ? local.amt : `Rs. ${apiBal > 0 ? Math.round(apiBal).toLocaleString("en-IN") : "0"}`;
+  const g = local ? local.g : p.balanceType !== "TO_GIVE";
+
   return {
     id: p.id,
     init,
     name: p.fullName,
     ph: p.phoneNumber ?? "",
-    amt: `Rs. ${bal > 0 ? Math.round(bal).toLocaleString("en-IN") : "0"}`,
-    g: p.balanceType !== "TO_GIVE",
+    amt,
+    g,
     type: p.type === "SUPPLIER" ? "s" : "c",
     email: p.email,
     address: p.address,

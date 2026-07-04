@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-  Search, Plus, ArrowLeft, Settings, ChevronDown, Pencil, Trash2, ArrowUpDown,
+  Search, Plus, ArrowLeft, Settings, ChevronDown, Pencil, Trash2, ArrowUpDown, Hexagon, ArrowRight,
 } from "lucide-react";
 import type { InventoryItem } from "@/lib/types";
 import { DeleteConfirmModal } from "./DeleteConfirmModal";
@@ -33,30 +33,43 @@ export function InventorySplitView({
 }: InventorySplitViewProps) {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"activity" | "details" | "variants">("activity");
-  const [selSize, setSelSize] = useState<string>("");
-  const [selColor, setSelColor] = useState<string>("");
   const [manageOpen, setManageOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [selSize, setSelSize] = useState("All");
+  const [selColor, setSelColor] = useState<string | null>(null);
+  // Reset the variant filter pills whenever the selected item changes, so a
+  // stale Size/Color choice from the previous item isn't carried over. Done
+  // during render (React's recommended way to reset state on prop change)
+  // rather than in an effect, to avoid an extra render pass.
+  const [prevSelectedIdx, setPrevSelectedIdx] = useState(selectedIdx);
+  if (selectedIdx !== prevSelectedIdx) {
+    setPrevSelectedIdx(selectedIdx);
+    setSelSize("All");
+    setSelColor(null);
+  }
 
   const filtered = search
     ? items.filter((it) => it.name.toLowerCase().includes(search.toLowerCase()))
     : items;
   const item = selectedIdx !== null ? items[selectedIdx] : null;
 
-  const varLabel0 = item?.varLabels?.[0] ?? "Size";
-  const varLabel1 = item?.varLabels?.[1] ?? "Color";
+  const varLabel0 = item?.varLabels?.[0] ?? "Variation 1";
+  const varLabel1 = item?.varLabels?.[1] ?? "Variation 2";
   const sizes = item?.variants ? [...new Set(item.variants.map((v) => v.size).filter(Boolean))] : [];
   const colors = item?.variants ? [...new Set(item.variants.map((v) => v.color).filter(Boolean))] : [];
+  const variantStock = item?.qty ?? 0;
 
-  const variantStock = (() => {
-    if (!item?.variants) return item?.qty ?? 0;
-    if (selSize && selColor) {
-      return item.variants.find((v) => v.size === selSize && v.color === selColor)?.stock ?? 0;
-    }
-    if (selSize) return item.variants.filter((v) => v.size === selSize).reduce((a, v) => a + v.stock, 0);
-    if (selColor) return item.variants.filter((v) => v.color === selColor).reduce((a, v) => a + v.stock, 0);
-    return item.qty;
-  })();
+  const isVariantFullySelected =
+    (sizes.length === 0 || selSize !== "All") && (colors.length === 0 || selColor !== null);
+  const selectedVariant = isVariantFullySelected
+    ? item?.variants?.find(
+        (v) => (sizes.length === 0 || v.size === selSize) && (colors.length === 0 || v.color === selColor)
+      )
+    : undefined;
+  const pillCls = (active: boolean) =>
+    `px-4 py-1.5 text-[13px] font-semibold rounded-xl border transition-colors ${
+      active ? "bg-[#29ad82] border-[#29ad82] text-white" : "bg-white border-[#e5e5e5] text-[#1a1a1a] hover:bg-gray-50"
+    }`;
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -193,76 +206,6 @@ export function InventorySplitView({
               ))}
             </div>
 
-            {/* Variant selectors */}
-            {item.variants && item.variants.length > 0 && (
-              <div className="px-5 py-3.5 border-b border-[#f0f0f0] flex-shrink-0 space-y-3">
-                {sizes.length > 0 && (
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-[12px] text-gray-500 font-medium w-10 flex-shrink-0">{varLabel0}</span>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => { setSelSize(""); setSelColor(""); }}
-                        className={`h-[34px] min-w-[38px] px-3.5 rounded-lg text-[13px] font-semibold border-[1.5px] transition-all ${selSize === "" && selColor === "" ? "bg-[#29ad82] border-[#29ad82] text-white" : "bg-white border-[#e0e0e0] text-gray-700 hover:border-[#29ad82]"}`}
-                      >
-                        All
-                      </button>
-                      {sizes.map((sz) => {
-                        const hasStock = item.variants!.some((v) => v.size === sz && v.stock > 0);
-                        const isActive = selSize === sz;
-                        return (
-                          <button
-                            key={sz}
-                            onClick={() => setSelSize(isActive ? "" : sz)}
-                            className={`h-[34px] min-w-[38px] px-3.5 rounded-lg text-[13px] font-medium border-[1.5px] transition-all ${isActive ? "bg-[#29ad82] border-[#29ad82] text-white font-semibold" : hasStock ? "bg-white border-[#e0e0e0] text-gray-700 hover:border-[#29ad82]" : "bg-white border-[#e0e0e0] text-gray-300 line-through cursor-not-allowed"}`}
-                          >
-                            {sz}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {colors.length > 0 && (
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-[12px] text-gray-500 font-medium w-10 flex-shrink-0">{varLabel1}</span>
-                    <div className="flex flex-wrap gap-2">
-                      {colors.map((cl) => {
-                        const isActive = selColor === cl;
-                        return (
-                          <button
-                            key={cl}
-                            onClick={() => setSelColor(isActive ? "" : cl)}
-                            className={`h-[34px] px-3.5 rounded-lg text-[13px] font-medium border-[1.5px] transition-all ${isActive ? "bg-[#29ad82] border-[#29ad82] text-white font-semibold" : "bg-white border-[#e0e0e0] text-gray-700 hover:border-[#29ad82]"}`}
-                          >
-                            {cl}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {(selSize || selColor) && (
-                  <div className="flex items-center gap-2.5 bg-[#f5f5f3] rounded-xl px-4 py-2.5 mt-1">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                    </svg>
-                    <span className="text-[12.5px] text-gray-500">Selected:</span>
-                    <span className="bg-[#29ad82] text-white text-[12px] font-semibold rounded-lg px-2.5 py-0.5">
-                      {[selSize, selColor].filter(Boolean).join(" / ")}
-                    </span>
-                    <span className="text-gray-400 text-[13px]">→</span>
-                    <span className={`text-[13px] font-bold ${variantStock === 0 ? "text-[#d32f2f]" : variantStock <= 5 ? "text-[#e65100]" : "text-[#29ad82]"}`}>
-                      {variantStock} PCS
-                    </span>
-                    <span className="text-gray-300 text-[12px]">·</span>
-                    <span className="text-[13px] text-gray-600">{item.sale}</span>
-                    <span className="ml-auto text-[11px] text-gray-400">in stock</span>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Tabs */}
             <div className="flex border-b border-[#f0f0f0] px-5 flex-shrink-0">
@@ -348,28 +291,63 @@ export function InventorySplitView({
               )}
 
               {activeTab === "variants" && item.variants && (
-                <table className="w-full text-[12.5px] border-collapse mx-auto px-5">
-                  <thead>
-                    <tr className="border-b border-[#f0f0f0]">
-                      {[...(sizes.length > 0 ? [varLabel0] : []), ...(colors.length > 0 ? [varLabel1] : []), "Stock"].map((h) => (
-                        <th key={h} className="text-left py-2 px-3 text-[11px] text-gray-400 font-medium">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {item.variants.map((v, i) => (
-                      <tr key={i} className="border-b border-[#f8f8f8] hover:bg-gray-50">
-                        {v.size && <td className="py-2.5 px-3 font-medium text-gray-700">{v.size}</td>}
-                        {v.color && <td className="py-2.5 px-3 text-gray-600">{v.color}</td>}
-                        <td className="py-2.5 px-3">
-                          <span className={v.stock === 0 ? "text-[#d32f2f] font-semibold" : v.stock < 5 ? "text-[#e65100] font-semibold" : "text-gray-700"}>
-                            {v.stock} PCS
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="px-5 py-4">
+                  {sizes.length > 0 && (
+                    <div className="mb-4">
+                      <div className="text-[12.5px] text-gray-500 font-medium mb-2">{varLabel0}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => setSelSize("All")} className={pillCls(selSize === "All")}>
+                          All
+                        </button>
+                        {sizes.map((s) => (
+                          <button key={s} onClick={() => setSelSize(s)} className={pillCls(selSize === s)}>
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {colors.length > 0 && (
+                    <div className="mb-4">
+                      <div className="text-[12.5px] text-gray-500 font-medium mb-2">{varLabel1}</div>
+                      <div className="flex flex-wrap gap-2">
+                        {colors.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => setSelColor((prev) => (prev === c ? null : c))}
+                            className={pillCls(selColor === c)}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedVariant && (
+                    <div className="flex items-center gap-3 border border-[#e5e5e5] rounded-xl px-4 py-3 bg-[#fafafa]">
+                      <Hexagon size={16} className="text-gray-400 flex-shrink-0" />
+                      <span className="text-[13px] text-gray-500 font-medium">Selected:</span>
+                      <span className="px-2.5 py-1 text-[12.5px] font-semibold rounded-lg bg-[#29ad82] text-white">
+                        {[selSize !== "All" ? selSize : null, selColor].filter(Boolean).join(" / ")}
+                      </span>
+                      <ArrowRight size={14} className="text-gray-300 flex-shrink-0" />
+                      <span
+                        className={`text-[15px] font-bold ${selectedVariant.stock === 0 ? "text-[#d32f2f]" : selectedVariant.stock < 5 ? "text-[#e65100]" : "text-[#1a1a1a]"}`}
+                      >
+                        {selectedVariant.stock} PCS
+                      </span>
+                      <span className="text-gray-300">·</span>
+                      <span className="text-[14px] font-semibold text-[#1a1a1a]">
+                        Rs. {Math.round(selectedVariant.salesPrice ?? 0).toLocaleString("en-US")}
+                      </span>
+                      <span className="ml-auto text-[12px] text-gray-400 flex-shrink-0">
+                        {selectedVariant.stock > 0 ? "in stock" : "out of stock"}
+                      </span>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

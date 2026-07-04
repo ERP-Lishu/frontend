@@ -123,14 +123,17 @@ export function CreateInvoicePage() {
   // Calculations
   const subTotal = rows.reduce((s, r) => s + calcRow(r), 0);
 
-  // Discount: if % entered → compute Rs. amount; if Rs. entered directly use that
-  const discountRs = discPct
-    ? (subTotal * (parseFloat(discPct) || 0)) / 100
-    : parseFloat(discAmt) || 0;
+  // Discount: if % entered → compute Rs. amount; if Rs. entered directly use that.
+  // Only applied when the discount row has actually been added.
+  const discountRs = showDiscount
+    ? discPct
+      ? (subTotal * (parseFloat(discPct) || 0)) / 100
+      : parseFloat(discAmt) || 0
+    : 0;
 
-  // Tax
+  // Tax: only applied when the tax row has actually been added.
   const taxRate = taxType === "VAT 13%" ? 0.13 : taxType === "VAT 5%" ? 0.05 : 0;
-  const taxAmt = (subTotal - discountRs) * taxRate;
+  const taxAmt = showTax ? (subTotal - discountRs) * taxRate : 0;
 
   const totalAmount = subTotal - discountRs + taxAmt;
   const receivedNum = receivedEnabled ? (parseFloat(receivedAmt) || 0) : 0;

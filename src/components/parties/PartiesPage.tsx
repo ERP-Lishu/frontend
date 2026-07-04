@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { isAxiosError } from "axios";
 import {
   Search,
   SlidersHorizontal,
@@ -20,6 +21,7 @@ import {
   FileText,
   RotateCcw,
   RefreshCcw,
+  Calendar,
   X,
 } from "lucide-react";
 import type { Party, Transaction } from "@/lib/types";
@@ -28,10 +30,22 @@ import { AddPartyModal } from "./AddPartyModal";
 import { useParties } from "@/context/PartiesContext";
 import { useSales } from "@/context/SalesContext";
 import { usePurchase } from "@/context/PurchaseContext";
+import { usePayments } from "@/context/PaymentsContext";
 import { createPaymentInApi } from "@/lib/api/payment-in";
 import { createPaymentOutApi } from "@/lib/api/payment-out";
 import { createSalesReturnApi } from "@/lib/api/sales-return";
 import { createPurchaseReturnApi } from "@/lib/api/purchase-return";
+
+/** Format a payment's ISO date into the same readable style as invoices/bills. */
+function fmtPaymentDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
+}
 
 /** Derive human-readable status from party fields */
 function parsePartyAmount(value: string) {
@@ -53,11 +67,20 @@ function statusColor(status: "To Receive" | "To Give" | "Settled") {
   return "text-[#1a1a1a]";
 }
 
-function TransactionRow({ tx }: { tx: Transaction }) {
+function TransactionRow({
+  tx,
+  onClick,
+}: {
+  tx: Transaction;
+  onClick?: () => void;
+}) {
   const isInvoice = tx.kind === "invoice";
   const isPaymentIn = tx.kind === "payment_in";
   return (
-    <tr className="border-b border-[#f7f7f7] hover:bg-gray-50 cursor-pointer">
+    <tr
+      onClick={onClick}
+      className="border-b border-[#f7f7f7] hover:bg-gray-50 cursor-pointer"
+    >
       <td className="py-3 px-4">
         <div className="flex items-center gap-2.5">
           <div
@@ -96,10 +119,10 @@ const TRANSACTION_TYPES = [
   { label: "Purchase", icon: ShoppingCart },
   { label: "Payment In", icon: ArrowDownLeft },
   { label: "Payment Out", icon: ArrowUpRight },
-  { label: "Quotation", icon: FileText },
+  // { label: "Quotation", icon: FileText },
   { label: "Sales Return", icon: RotateCcw },
   { label: "Purchase Return", icon: RefreshCcw },
-  { label: "Adjust Balance", icon: ArrowUpDown },
+  // { label: "Adjust Balance", icon: ArrowUpDown },
 ];
 
 function DeleteConfirmModal({
@@ -160,6 +183,155 @@ function DeleteConfirmModal({
   );
 }
 
+function CannotDeletePartyModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-[420px] p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <h2 className="text-[16px] font-bold text-[#1a1a1a]">
+            Cannot Delete This Party
+          </h2>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <p className="text-[13.5px] text-gray-500 mb-6">
+          You can&apos;t delete this party because there are transactions
+          linked to it. Please remove or settle the transactions before
+          deleting the party.
+        </p>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2 text-[13px] border border-[#29ad82] text-[#29ad82] rounded-xl hover:bg-[#edfaf4] font-semibold transition-colors"
+          >
+            Okay, Got It
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditOpeningBalanceModal({
+  party,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  party: Party;
+  onClose: () => void;
+  onSave: (amt: string, g: boolean) => void;
+  onDelete: () => void;
+}) {
+  const [amount, setAmount] = useState(() =>
+    party.amt.replace(/[^0-9.]/g, ""),
+  );
+  const [balType, setBalType] = useState<"r" | "g">(party.g ? "r" : "g");
+
+  function handleEditDetails() {
+    const num = parseFloat(amount) || 0;
+    onSave(
+      `Rs. ${num > 0 ? Math.round(num).toLocaleString("en-IN") : "0"}`,
+      balType === "r",
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-[440px] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f0f0]">
+          <span className="text-[16px] font-bold text-[#1a1a1a]">
+            Edit Opening Balance
+          </span>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-5 grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px] text-gray-600 font-medium">
+              Opening Balance
+            </label>
+            <div className="flex border border-[#e5e5e5] rounded-lg overflow-hidden bg-[#f8f8f8] focus-within:border-[#29ad82]">
+              <span className="px-3 py-2 bg-[#f0f0f0] text-[12px] text-gray-400 border-r border-[#e5e5e5] font-medium">
+                Rs.
+              </span>
+              <input
+                className="flex-1 min-w-0 px-3 py-2 text-[13px] outline-none bg-transparent"
+                type="number"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px] text-gray-600 font-medium">
+              Date
+            </label>
+            <div className="flex items-center gap-2 border border-[#e5e5e5] rounded-lg px-3 py-2 bg-[#f8f8f8]">
+              <span className="flex-1 text-[13px] text-gray-700">
+                2083 Asa 20
+              </span>
+              <Calendar size={15} className="text-gray-400 flex-shrink-0" />
+            </div>
+          </div>
+          <div className="col-span-2 flex flex-col gap-1">
+            <label className="text-[12px] text-gray-600 font-medium">
+              Opening Balance Type
+            </label>
+            <div className="flex gap-2">
+              {(["r", "g"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setBalType(t)}
+                  className={`px-4 py-1.5 text-[12.5px] rounded-lg border-[1.5px] font-medium transition-colors ${balType === t ? "border-[#29ad82] text-[#29ad82] bg-[#edfaf4]" : "border-[#e5e5e5] text-gray-400 bg-[#fafafa]"}`}
+                >
+                  {t === "r" ? "To Receive" : "To Give"}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2.5 px-5 py-3.5 border-t border-[#f0f0f0]">
+          <button
+            onClick={onDelete}
+            className="flex items-center gap-1.5 px-4 py-2 text-[13px] border border-[#e5e5e5] rounded-xl text-gray-600 hover:bg-gray-50 font-medium transition-colors"
+          >
+            <Trash2 size={13} /> Delete
+          </button>
+          <button
+            onClick={handleEditDetails}
+            className="flex items-center gap-1.5 px-5 py-2 text-[13px] bg-[#29ad82] text-white rounded-xl hover:bg-[#1d9470] font-semibold transition-colors"
+          >
+            <Pencil size={13} /> Edit Details
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const PAYMENT_METHODS = ["Cash", "Cheque", "Bank Transfer", "Credit Card"];
 
 function PaymentModal({
@@ -183,13 +355,31 @@ function PaymentModal({
 
   async function handleSave() {
     const amt = parseFloat(amount);
-    if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
+    if (!amt || amt <= 0) {
+      setError("Enter a valid amount");
+      return;
+    }
     setSaving(true);
+    const receiptNumber = `${type === "in" ? "PI" : "PO"}-${Date.now()}`;
     try {
       if (type === "in") {
-        await createPaymentInApi({ partyId, receivedAmount: amt, paymentMethod: method.toUpperCase().replace(/ /g, "_"), remarks: remarks || undefined, date: new Date().toISOString() });
+        await createPaymentInApi({
+          receiptNumber,
+          partyId,
+          receivedAmount: amt,
+          paymentMethod: method.toUpperCase().replace(/ /g, "_"),
+          remarks: remarks || undefined,
+          date: new Date().toISOString(),
+        });
       } else {
-        await createPaymentOutApi({ partyId, paidAmount: amt, paymentMethod: method.toUpperCase().replace(/ /g, "_"), remarks: remarks || undefined, date: new Date().toISOString() });
+        await createPaymentOutApi({
+          receiptNumber,
+          partyId,
+          paidAmount: amt,
+          paymentMethod: method.toUpperCase().replace(/ /g, "_"),
+          remarks: remarks || undefined,
+          date: new Date().toISOString(),
+        });
       }
       onSuccess();
       onClose();
@@ -201,39 +391,61 @@ function PaymentModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[400px] p-6" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-[400px] p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-5">
           <span className="text-[16px] font-bold text-[#1a1a1a]">{title}</span>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X size={18} />
+          </button>
         </div>
         <div className="space-y-4">
           <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">Amount *</label>
+            <label className="text-[12px] text-gray-500 font-medium block mb-1">
+              Amount *
+            </label>
             <div className="flex items-center border border-[#e5e5e5] rounded-lg px-3 py-2 focus-within:border-[#29ad82]">
               <span className="text-[13px] text-gray-400 mr-2">Rs.</span>
               <input
                 autoFocus
                 type="number"
                 value={amount}
-                onChange={(e) => { setAmount(e.target.value); setError(""); }}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  setError("");
+                }}
                 className="flex-1 text-[13px] outline-none"
                 placeholder="0"
               />
             </div>
           </div>
           <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">Payment Method</label>
+            <label className="text-[12px] text-gray-500 font-medium block mb-1">
+              Payment Method
+            </label>
             <select
               value={method}
               onChange={(e) => setMethod(e.target.value)}
               className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
             >
-              {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
+              {PAYMENT_METHODS.map((m) => (
+                <option key={m}>{m}</option>
+              ))}
             </select>
           </div>
           <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">Remarks</label>
+            <label className="text-[12px] text-gray-500 font-medium block mb-1">
+              Remarks
+            </label>
             <input
               type="text"
               value={remarks}
@@ -245,7 +457,12 @@ function PaymentModal({
           {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
         <div className="flex gap-2 mt-6">
-          <button onClick={onClose} className="flex-1 border border-[#e5e5e5] rounded-lg py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={onClose}
+            className="flex-1 border border-[#e5e5e5] rounded-lg py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
           <button
             onClick={handleSave}
             disabled={saving}
@@ -283,10 +500,16 @@ function ReturnModal({
   const amount = (parseFloat(qty) || 0) * (parseFloat(rate) || 0);
 
   async function handleSave() {
-    if (!itemName.trim()) { setError("Enter item name"); return; }
+    if (!itemName.trim()) {
+      setError("Enter item name");
+      return;
+    }
     const q = parseFloat(qty) || 0;
     const r = parseFloat(rate) || 0;
-    if (q <= 0 || r <= 0) { setError("Enter valid quantity and rate"); return; }
+    if (q <= 0 || r <= 0) {
+      setError("Enter valid quantity and rate");
+      return;
+    }
     setSaving(true);
     const returnNo = `RET-${Date.now()}`;
     const payload = {
@@ -315,27 +538,45 @@ function ReturnModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[440px] p-6" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-[440px] p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-5">
           <span className="text-[16px] font-bold text-[#1a1a1a]">{title}</span>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X size={18} />
+          </button>
         </div>
         <div className="space-y-4">
           <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">Item Name *</label>
+            <label className="text-[12px] text-gray-500 font-medium block mb-1">
+              Item Name *
+            </label>
             <input
               autoFocus
               type="text"
               value={itemName}
-              onChange={(e) => { setItemName(e.target.value); setError(""); }}
+              onChange={(e) => {
+                setItemName(e.target.value);
+                setError("");
+              }}
               className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
               placeholder="Enter item name"
             />
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="text-[12px] text-gray-500 font-medium block mb-1">Quantity *</label>
+              <label className="text-[12px] text-gray-500 font-medium block mb-1">
+                Quantity *
+              </label>
               <input
                 type="number"
                 value={qty}
@@ -345,7 +586,9 @@ function ReturnModal({
               />
             </div>
             <div className="flex-1">
-              <label className="text-[12px] text-gray-500 font-medium block mb-1">Rate *</label>
+              <label className="text-[12px] text-gray-500 font-medium block mb-1">
+                Rate *
+              </label>
               <input
                 type="number"
                 value={rate}
@@ -356,20 +599,31 @@ function ReturnModal({
             </div>
           </div>
           {amount > 0 && (
-            <div className="text-[13px] text-gray-600">Total: <span className="font-semibold text-[#1a1a1a]">Rs. {Math.round(amount).toLocaleString("en-IN")}</span></div>
+            <div className="text-[13px] text-gray-600">
+              Total:{" "}
+              <span className="font-semibold text-[#1a1a1a]">
+                Rs. {Math.round(amount).toLocaleString("en-IN")}
+              </span>
+            </div>
           )}
           <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">Payment Mode</label>
+            <label className="text-[12px] text-gray-500 font-medium block mb-1">
+              Payment Mode
+            </label>
             <select
               value={method}
               onChange={(e) => setMethod(e.target.value)}
               className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
             >
-              {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
+              {PAYMENT_METHODS.map((m) => (
+                <option key={m}>{m}</option>
+              ))}
             </select>
           </div>
           <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">Notes</label>
+            <label className="text-[12px] text-gray-500 font-medium block mb-1">
+              Notes
+            </label>
             <input
               type="text"
               value={notes}
@@ -381,7 +635,12 @@ function ReturnModal({
           {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
         <div className="flex gap-2 mt-6">
-          <button onClick={onClose} className="flex-1 border border-[#e5e5e5] rounded-lg py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={onClose}
+            className="flex-1 border border-[#e5e5e5] rounded-lg py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
           <button
             onClick={handleSave}
             disabled={saving}
@@ -399,19 +658,52 @@ function PartyDetail({
   party,
   onDelete,
   onEdit,
+  onPaymentSaved,
+  onUpdateOpeningBalance,
 }: {
   party: Party;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
   onEdit: (party: Party) => void;
+  onPaymentSaved: () => void;
+  onUpdateOpeningBalance: (amt: string, g: boolean) => void;
 }) {
   const router = useRouter();
   const [manageOpen, setManageOpen] = useState(false);
   const [addTxnOpen, setAddTxnOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
-  const [activeModal, setActiveModal] = useState<"payment-in" | "payment-out" | "sales-return" | "purchase-return" | null>(null);
+  const [cannotDeleteOpen, setCannotDeleteOpen] = useState(false);
+  const [openingBalanceModalOpen, setOpeningBalanceModalOpen] =
+    useState(false);
+  const [activeModal, setActiveModal] = useState<
+    "payment-in" | "payment-out" | "sales-return" | "purchase-return" | null
+  >(null);
   const manageRef = useRef<HTMLDivElement>(null);
   const addTxnRef = useRef<HTMLDivElement>(null);
   const status = partyStatus(party);
+
+  function openTransaction(tx: Transaction) {
+    if (tx.type === "Opening Balance") {
+      setOpeningBalanceModalOpen(true);
+      return;
+    }
+    if (!tx.refId) return;
+    if (tx.type === "Sales Invoice") {
+      router.push(`/sales/invoices/create?edit=${tx.refId}`);
+    } else if (tx.type === "Purchase Bill") {
+      router.push(`/purchase/bills/create?edit=${tx.refId}`);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    setDeleteConfirm(false);
+    try {
+      await onDelete(party.id!);
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 409) {
+        setCannotDeleteOpen(true);
+      }
+    }
+  }
 
   function handleTransactionType(label: string) {
     setAddTxnOpen(false);
@@ -457,25 +749,65 @@ function PartyDetail({
       {deleteConfirm && (
         <DeleteConfirmModal
           name={party.name}
-          onConfirm={() => {
-            setDeleteConfirm(false);
-            onDelete(party.id!);
-          }}
+          onConfirm={handleConfirmDelete}
           onCancel={() => setDeleteConfirm(false)}
         />
       )}
 
+      {cannotDeleteOpen && (
+        <CannotDeletePartyModal onClose={() => setCannotDeleteOpen(false)} />
+      )}
+
+      {openingBalanceModalOpen && (
+        <EditOpeningBalanceModal
+          party={party}
+          onClose={() => setOpeningBalanceModalOpen(false)}
+          onSave={(amt, g) => {
+            onUpdateOpeningBalance(amt, g);
+            setOpeningBalanceModalOpen(false);
+          }}
+          onDelete={() => {
+            onUpdateOpeningBalance("Rs. 0", true);
+            setOpeningBalanceModalOpen(false);
+          }}
+        />
+      )}
+
       {activeModal === "payment-in" && party.id && (
-        <PaymentModal title="Record Payment In" partyId={party.id} type="in" onClose={() => setActiveModal(null)} onSuccess={() => {}} />
+        <PaymentModal
+          title="Record Payment In"
+          partyId={party.id}
+          type="in"
+          onClose={() => setActiveModal(null)}
+          onSuccess={onPaymentSaved}
+        />
       )}
       {activeModal === "payment-out" && party.id && (
-        <PaymentModal title="Record Payment Out" partyId={party.id} type="out" onClose={() => setActiveModal(null)} onSuccess={() => {}} />
+        <PaymentModal
+          title="Record Payment Out"
+          partyId={party.id}
+          type="out"
+          onClose={() => setActiveModal(null)}
+          onSuccess={onPaymentSaved}
+        />
       )}
       {activeModal === "sales-return" && party.id && (
-        <ReturnModal title="Create Sales Return" partyId={party.id} type="sales" onClose={() => setActiveModal(null)} onSuccess={() => {}} />
+        <ReturnModal
+          title="Create Sales Return"
+          partyId={party.id}
+          type="sales"
+          onClose={() => setActiveModal(null)}
+          onSuccess={() => {}}
+        />
       )}
       {activeModal === "purchase-return" && party.id && (
-        <ReturnModal title="Create Purchase Return" partyId={party.id} type="purchase" onClose={() => setActiveModal(null)} onSuccess={() => {}} />
+        <ReturnModal
+          title="Create Purchase Return"
+          partyId={party.id}
+          type="purchase"
+          onClose={() => setActiveModal(null)}
+          onSuccess={() => {}}
+        />
       )}
 
       {/* Header */}
@@ -709,7 +1041,11 @@ function PartyDetail({
             </thead>
             <tbody>
               {party.txns.map((tx, i) => (
-                <TransactionRow key={i} tx={tx} />
+                <TransactionRow
+                  key={i}
+                  tx={tx}
+                  onClick={() => openTransaction(tx)}
+                />
               ))}
             </tbody>
           </table>
@@ -732,6 +1068,7 @@ export function PartiesPage() {
   const { parties, addParty, deleteParty, updateParty } = useParties();
   const { invoices } = useSales();
   const { bills } = usePurchase();
+  const { paymentsIn, paymentsOut, refresh: refreshPayments } = usePayments();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -773,6 +1110,16 @@ export function PartiesPage() {
     return () => document.removeEventListener("mousedown", handleOutside);
   }, []);
 
+  function paymentsForParty(p: Party) {
+    const ins = paymentsIn.filter(
+      (pi) => (p.id && pi.partyId === p.id) || pi.partyName === p.name,
+    );
+    const outs = paymentsOut.filter(
+      (po) => (p.id && po.partyId === p.id) || po.partyName === p.name,
+    );
+    return { ins, outs };
+  }
+
   function getOutstanding(p: Party): number {
     const salesTotal = invoices
       .filter((inv) => inv.party === p.name || (p.id && inv.partyId === p.id))
@@ -780,15 +1127,26 @@ export function PartiesPage() {
     const purchaseTotal = bills
       .filter((b) => b.supplier === p.name || (p.id && b.supplierId === p.id))
       .reduce((sum, b) => sum + parsePartyAmount(b.balance), 0);
-    return salesTotal + purchaseTotal;
+    // Recorded payments reduce the outstanding balance.
+    const { ins, outs } = paymentsForParty(p);
+    const paymentsTotal =
+      ins.reduce((s, pi) => s + (pi.receivedAmount || 0), 0) +
+      outs.reduce((s, po) => s + (po.paidAmount || 0), 0);
+    return salesTotal + purchaseTotal - paymentsTotal;
   }
 
   function withComputedAmt(p: Party): Party {
-    const total = getOutstanding(p);
+    // Start from the party's stored opening balance (signed by its direction:
+    // `g` true = "To Receive" → +, false = "To Give" → -), then add the
+    // outstanding amount from their sales invoices / purchase bills.
+    const opening = parsePartyAmount(p.amt);
+    const openingSigned = p.g ? opening : -opening;
+    const net = openingSigned + getOutstanding(p);
+    const abs = Math.abs(net);
     return {
       ...p,
-      amt: total > 0 ? `Rs. ${Math.round(total).toLocaleString("en-IN")}` : "Rs. 0",
-      g: total > 0,
+      amt: abs > 0 ? `Rs. ${Math.round(abs).toLocaleString("en-IN")}` : "Rs. 0",
+      g: net >= 0,
     };
   }
 
@@ -819,11 +1177,24 @@ export function PartiesPage() {
     ? {
         ...withComputedAmt(selectedPartyBase),
         txns: [
+          ...(parsePartyAmount(selectedPartyBase.amt) > 0
+            ? [
+                {
+                  kind: "invoice" as const,
+                  type: "Opening Balance",
+                  date: "Opening",
+                  total: selectedPartyBase.amt,
+                  status: "--",
+                  bal: selectedPartyBase.amt,
+                  rem: "--",
+                },
+              ]
+            : []),
           ...invoices
             .filter(
               (inv) =>
                 inv.party === selectedPartyBase.name ||
-                (selectedPartyBase.id && inv.partyId === selectedPartyBase.id)
+                (selectedPartyBase.id && inv.partyId === selectedPartyBase.id),
             )
             .map((inv) => ({
               kind: "invoice" as const,
@@ -834,13 +1205,14 @@ export function PartiesPage() {
               bal: inv.balance,
               rem: inv.balance,
               rcpt: inv.no,
+              refId: inv.id,
               creator: inv.creator,
             })),
           ...bills
             .filter(
               (b) =>
                 b.supplier === selectedPartyBase.name ||
-                (selectedPartyBase.id && b.supplierId === selectedPartyBase.id)
+                (selectedPartyBase.id && b.supplierId === selectedPartyBase.id),
             )
             .map((b) => ({
               kind: "invoice" as const,
@@ -851,14 +1223,38 @@ export function PartiesPage() {
               bal: b.balance,
               rem: b.balance,
               rcpt: b.no,
+              refId: b.id,
               creator: "Admin",
             })),
-        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+          ...paymentsForParty(selectedPartyBase).ins.map((pi) => ({
+            kind: "payment_in" as const,
+            type: "Payment In",
+            date: fmtPaymentDate(pi.date),
+            total: `Rs. ${Math.round(pi.receivedAmount || 0).toLocaleString("en-IN")}`,
+            status: "PAID",
+            bal: "--",
+            rem: pi.remarks || "--",
+            rcpt: pi.receiptNumber,
+          })),
+          ...paymentsForParty(selectedPartyBase).outs.map((po) => ({
+            kind: "payment_out" as const,
+            type: "Payment Out",
+            date: fmtPaymentDate(po.date),
+            total: `Rs. ${Math.round(po.paidAmount || 0).toLocaleString("en-IN")}`,
+            status: "PAID",
+            bal: "--",
+            rem: po.remarks || "--",
+            rcpt: po.receiptNumber,
+          })),
+        ].sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        ),
       }
     : null;
 
   function handleAddParty(party: Party) {
     void addParty(party);
+    setSearch("");
     setSelected(party.name);
   }
 
@@ -872,6 +1268,11 @@ export function PartiesPage() {
     updateParty(editingParty.id!, updated);
     setSelected(updated.name);
     setEditingParty(null);
+  }
+
+  function handleOpeningBalanceSave(amt: string, g: boolean) {
+    if (!selectedPartyBase?.id) return;
+    updateParty(selectedPartyBase.id, { ...selectedPartyBase, amt, g });
   }
 
   return (
@@ -1070,6 +1471,8 @@ export function PartiesPage() {
             party={selectedParty}
             onDelete={deleteParty}
             onEdit={handleEditParty}
+            onPaymentSaved={() => void refreshPayments()}
+            onUpdateOpeningBalance={handleOpeningBalanceSave}
           />
         )}
       </div>

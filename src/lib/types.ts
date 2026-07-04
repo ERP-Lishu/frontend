@@ -7,6 +7,7 @@ export interface Transaction {
   rem: string;
   kind: "invoice" | "payment_in" | "payment_out";
   rcpt?: string;
+  refId?: string; // id of the source sales invoice / purchase bill, for navigation
   mdate?: string;
   amount?: string;
   method?: string;
@@ -55,6 +56,9 @@ export interface InventoryVariant {
   size: string;
   color: string;
   stock: number;
+  sku?: string;
+  salesPrice?: number;
+  purchasePrice?: number;
 }
 
 export interface InventoryItem {

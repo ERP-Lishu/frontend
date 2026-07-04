@@ -53,6 +53,7 @@ export async function fetchPaymentInApi(): Promise<PaymentInApiResponse[]> {
 }
 
 export interface CreatePaymentInPayload {
+  receiptNumber: string;
   partyId?: string;
   receivedAmount: number;
   paymentMethod: string;

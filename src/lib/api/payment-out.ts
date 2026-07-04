@@ -53,6 +53,7 @@ export async function fetchPaymentOutApi(): Promise<PaymentOutApiResponse[]> {
 }
 
 export interface CreatePaymentOutPayload {
+  receiptNumber: string;
   partyId?: string;
   paidAmount: number;
   paymentMethod: string;

@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import { CreatePurchaseBillPage } from "@/components/purchase/CreatePurchaseBillPage";
 
 export default function Page() {
-  return <CreatePurchaseBillPage />;
+  return (
+    <Suspense>
+      <CreatePurchaseBillPage />
+    </Suspense>
+  );
 }
