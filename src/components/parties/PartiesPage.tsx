@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { isAxiosError } from "axios";
 import {
   Search,
@@ -31,10 +31,25 @@ import { useParties } from "@/context/PartiesContext";
 import { useSales } from "@/context/SalesContext";
 import { usePurchase } from "@/context/PurchaseContext";
 import { usePayments } from "@/context/PaymentsContext";
-import { createPaymentInApi } from "@/lib/api/payment-in";
-import { createPaymentOutApi } from "@/lib/api/payment-out";
-import { createSalesReturnApi } from "@/lib/api/sales-return";
-import { createPurchaseReturnApi } from "@/lib/api/purchase-return";
+import {
+  createPaymentInApi,
+  updatePaymentInApi,
+  type PaymentInApiResponse,
+} from "@/lib/api/payment-in";
+import {
+  createPaymentOutApi,
+  updatePaymentOutApi,
+  type PaymentOutApiResponse,
+} from "@/lib/api/payment-out";
+import {
+  fetchSalesReturnsApi,
+  type SalesReturnApiResponse,
+} from "@/lib/api/sales-return";
+import {
+  fetchPurchaseReturnsApi,
+  type PurchaseReturnApiResponse,
+} from "@/lib/api/purchase-return";
+import { parsePartyAmount, computePartyRunningBalance } from "@/lib/partyBalance";
 
 /** Format a payment's ISO date into the same readable style as invoices/bills. */
 function fmtPaymentDate(iso: string): string {
@@ -48,12 +63,6 @@ function fmtPaymentDate(iso: string): string {
 }
 
 /** Derive human-readable status from party fields */
-function parsePartyAmount(value: string) {
-  const match = value.match(/[\d,]+(\.\d+)?/);
-  if (!match) return 0;
-  return parseFloat(match[0].replace(/,/g, "")) || 0;
-}
-
 function partyStatus(p: Party): "To Receive" | "To Give" | "Settled" {
   const num = parsePartyAmount(p.amt);
   if (num === 0) return "Settled";
@@ -75,7 +84,7 @@ function TransactionRow({
   onClick?: () => void;
 }) {
   const isInvoice = tx.kind === "invoice";
-  const isPaymentIn = tx.kind === "payment_in";
+  const isPaymentIn = tx.kind === "payment_in" || tx.kind === "sales_return";
   return (
     <tr
       onClick={onClick}
@@ -234,7 +243,7 @@ function EditOpeningBalanceModal({
   onDelete: () => void;
 }) {
   const [amount, setAmount] = useState(() =>
-    party.amt.replace(/[^0-9.]/g, ""),
+    party.amt.replace(/[^0-9]/g, ""),
   );
   const [balType, setBalType] = useState<"r" | "g">(party.g ? "r" : "g");
 
@@ -334,22 +343,42 @@ function EditOpeningBalanceModal({
 
 const PAYMENT_METHODS = ["Cash", "Cheque", "Bank Transfer", "Credit Card"];
 
+/** Convert a backend payment-method enum value (e.g. "BANK_TRANSFER") into its UI label. */
+function methodEnumToLabel(method: string): string {
+  const found = PAYMENT_METHODS.find(
+    (m) => m.toUpperCase().replace(/ /g, "_") === method,
+  );
+  return found ?? "Cash";
+}
+
+interface EditingPayment {
+  id: string;
+  amount: number;
+  method: string;
+  remarks: string;
+}
+
 function PaymentModal({
   title,
   partyId,
   type,
+  editing,
   onClose,
   onSuccess,
 }: {
   title: string;
   partyId: string;
   type: "in" | "out";
+  editing?: EditingPayment | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("Cash");
-  const [remarks, setRemarks] = useState("");
+  const isEdit = !!editing;
+  const [amount, setAmount] = useState(editing ? String(editing.amount) : "");
+  const [method, setMethod] = useState(
+    editing ? methodEnumToLabel(editing.method) : "Cash",
+  );
+  const [remarks, setRemarks] = useState(editing?.remarks ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -360,26 +389,43 @@ function PaymentModal({
       return;
     }
     setSaving(true);
-    const receiptNumber = `${type === "in" ? "PI" : "PO"}-${Date.now()}`;
     try {
-      if (type === "in") {
-        await createPaymentInApi({
-          receiptNumber,
-          partyId,
-          receivedAmount: amt,
-          paymentMethod: method.toUpperCase().replace(/ /g, "_"),
-          remarks: remarks || undefined,
-          date: new Date().toISOString(),
-        });
+      if (isEdit && editing) {
+        const paymentMethod = method.toUpperCase().replace(/ /g, "_");
+        if (type === "in") {
+          await updatePaymentInApi(editing.id, {
+            receivedAmount: amt,
+            paymentMethod,
+            remarks: remarks || undefined,
+          });
+        } else {
+          await updatePaymentOutApi(editing.id, {
+            paidAmount: amt,
+            paymentMethod,
+            remarks: remarks || undefined,
+          });
+        }
       } else {
-        await createPaymentOutApi({
-          receiptNumber,
-          partyId,
-          paidAmount: amt,
-          paymentMethod: method.toUpperCase().replace(/ /g, "_"),
-          remarks: remarks || undefined,
-          date: new Date().toISOString(),
-        });
+        const receiptNumber = `${type === "in" ? "PI" : "PO"}-${Date.now()}`;
+        if (type === "in") {
+          await createPaymentInApi({
+            receiptNumber,
+            partyId,
+            receivedAmount: amt,
+            paymentMethod: method.toUpperCase().replace(/ /g, "_"),
+            remarks: remarks || undefined,
+            date: new Date().toISOString(),
+          });
+        } else {
+          await createPaymentOutApi({
+            receiptNumber,
+            partyId,
+            paidAmount: amt,
+            paymentMethod: method.toUpperCase().replace(/ /g, "_"),
+            remarks: remarks || undefined,
+            date: new Date().toISOString(),
+          });
+        }
       }
       onSuccess();
       onClose();
@@ -468,185 +514,7 @@ function PaymentModal({
             disabled={saving}
             className="flex-1 bg-[#29ad82] text-white rounded-lg py-2 text-[13px] font-semibold hover:bg-[#1d9470] disabled:opacity-60"
           >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ReturnModal({
-  title,
-  partyId,
-  type,
-  onClose,
-  onSuccess,
-}: {
-  title: string;
-  partyId: string;
-  type: "sales" | "purchase";
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [itemName, setItemName] = useState("");
-  const [qty, setQty] = useState("");
-  const [rate, setRate] = useState("");
-  const [method, setMethod] = useState("Cash");
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const amount = (parseFloat(qty) || 0) * (parseFloat(rate) || 0);
-
-  async function handleSave() {
-    if (!itemName.trim()) {
-      setError("Enter item name");
-      return;
-    }
-    const q = parseFloat(qty) || 0;
-    const r = parseFloat(rate) || 0;
-    if (q <= 0 || r <= 0) {
-      setError("Enter valid quantity and rate");
-      return;
-    }
-    setSaving(true);
-    const returnNo = `RET-${Date.now()}`;
-    const payload = {
-      partyId,
-      returnNumber: returnNo,
-      returnDate: new Date().toISOString(),
-      notes: notes || undefined,
-      paymentMode: method.toUpperCase().replace(/ /g, "_"),
-      subTotal: amount,
-      totalAmount: amount,
-      items: [{ itemName: itemName.trim(), quantity: q, rate: r, amount }],
-    };
-    try {
-      if (type === "sales") {
-        await createSalesReturnApi(payload);
-      } else {
-        await createPurchaseReturnApi(payload);
-      }
-      onSuccess();
-      onClose();
-    } catch {
-      setError("Failed to save. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-[440px] p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-5">
-          <span className="text-[16px] font-bold text-[#1a1a1a]">{title}</span>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div className="space-y-4">
-          <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">
-              Item Name *
-            </label>
-            <input
-              autoFocus
-              type="text"
-              value={itemName}
-              onChange={(e) => {
-                setItemName(e.target.value);
-                setError("");
-              }}
-              className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
-              placeholder="Enter item name"
-            />
-          </div>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="text-[12px] text-gray-500 font-medium block mb-1">
-                Quantity *
-              </label>
-              <input
-                type="number"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
-                placeholder="0"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="text-[12px] text-gray-500 font-medium block mb-1">
-                Rate *
-              </label>
-              <input
-                type="number"
-                value={rate}
-                onChange={(e) => setRate(e.target.value)}
-                className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
-                placeholder="0"
-              />
-            </div>
-          </div>
-          {amount > 0 && (
-            <div className="text-[13px] text-gray-600">
-              Total:{" "}
-              <span className="font-semibold text-[#1a1a1a]">
-                Rs. {Math.round(amount).toLocaleString("en-IN")}
-              </span>
-            </div>
-          )}
-          <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">
-              Payment Mode
-            </label>
-            <select
-              value={method}
-              onChange={(e) => setMethod(e.target.value)}
-              className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
-            >
-              {PAYMENT_METHODS.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-[12px] text-gray-500 font-medium block mb-1">
-              Notes
-            </label>
-            <input
-              type="text"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full border border-[#e5e5e5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#29ad82]"
-              placeholder="Optional"
-            />
-          </div>
-          {error && <p className="text-[12px] text-red-500">{error}</p>}
-        </div>
-        <div className="flex gap-2 mt-6">
-          <button
-            onClick={onClose}
-            className="flex-1 border border-[#e5e5e5] rounded-lg py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 bg-[#29ad82] text-white rounded-lg py-2 text-[13px] font-semibold hover:bg-[#1d9470] disabled:opacity-60"
-          >
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : isEdit ? "Update" : "Save"}
           </button>
         </div>
       </div>
@@ -656,12 +524,16 @@ function ReturnModal({
 
 function PartyDetail({
   party,
+  paymentsIn,
+  paymentsOut,
   onDelete,
   onEdit,
   onPaymentSaved,
   onUpdateOpeningBalance,
 }: {
   party: Party;
+  paymentsIn: PaymentInApiResponse[];
+  paymentsOut: PaymentOutApiResponse[];
   onDelete: (id: string) => Promise<void>;
   onEdit: (party: Party) => void;
   onPaymentSaved: () => void;
@@ -675,8 +547,11 @@ function PartyDetail({
   const [openingBalanceModalOpen, setOpeningBalanceModalOpen] =
     useState(false);
   const [activeModal, setActiveModal] = useState<
-    "payment-in" | "payment-out" | "sales-return" | "purchase-return" | null
+    "payment-in" | "payment-out" | null
   >(null);
+  const [editingPayment, setEditingPayment] = useState<EditingPayment | null>(
+    null,
+  );
   const manageRef = useRef<HTMLDivElement>(null);
   const addTxnRef = useRef<HTMLDivElement>(null);
   const status = partyStatus(party);
@@ -687,10 +562,32 @@ function PartyDetail({
       return;
     }
     if (!tx.refId) return;
+    if (tx.kind === "payment_in" || tx.kind === "payment_out") {
+      const record =
+        tx.kind === "payment_in"
+          ? paymentsIn.find((p) => p.id === tx.refId)
+          : paymentsOut.find((p) => p.id === tx.refId);
+      if (!record) return;
+      setEditingPayment({
+        id: record.id,
+        amount:
+          tx.kind === "payment_in"
+            ? (record as PaymentInApiResponse).receivedAmount
+            : (record as PaymentOutApiResponse).paidAmount,
+        method: record.paymentMethod,
+        remarks: record.remarks ?? "",
+      });
+      setActiveModal(tx.kind === "payment_in" ? "payment-in" : "payment-out");
+      return;
+    }
+    // Pass partyId alongside edit so the create/edit form can navigate back
+    // to this same party's detail view (instead of the generic parties list)
+    // once the edit is saved.
+    const partyParam = party.id ? `&partyId=${party.id}` : "";
     if (tx.type === "Sales Invoice") {
-      router.push(`/sales/invoices/create?edit=${tx.refId}`);
+      router.push(`/sales/invoices/create?edit=${tx.refId}${partyParam}`);
     } else if (tx.type === "Purchase Bill") {
-      router.push(`/purchase/bills/create?edit=${tx.refId}`);
+      router.push(`/purchase/bills/create?edit=${tx.refId}${partyParam}`);
     }
   }
 
@@ -707,6 +604,7 @@ function PartyDetail({
 
   function handleTransactionType(label: string) {
     setAddTxnOpen(false);
+    setEditingPayment(null);
     const id = party.id;
     if (!id) return;
     if (label === "Sales Invoice") {
@@ -718,9 +616,9 @@ function PartyDetail({
     } else if (label === "Payment Out") {
       setActiveModal("payment-out");
     } else if (label === "Sales Return") {
-      setActiveModal("sales-return");
+      router.push(`/sales/returns/create?partyId=${id}`);
     } else if (label === "Purchase Return") {
-      setActiveModal("purchase-return");
+      router.push(`/purchase/returns/create?partyId=${id}`);
     }
   }
 
@@ -775,41 +673,30 @@ function PartyDetail({
 
       {activeModal === "payment-in" && party.id && (
         <PaymentModal
-          title="Record Payment In"
+          title={editingPayment ? "Edit Payment In" : "Record Payment In"}
           partyId={party.id}
           type="in"
-          onClose={() => setActiveModal(null)}
+          editing={editingPayment}
+          onClose={() => {
+            setActiveModal(null);
+            setEditingPayment(null);
+          }}
           onSuccess={onPaymentSaved}
         />
       )}
       {activeModal === "payment-out" && party.id && (
         <PaymentModal
-          title="Record Payment Out"
+          title={editingPayment ? "Edit Payment Out" : "Record Payment Out"}
           partyId={party.id}
           type="out"
-          onClose={() => setActiveModal(null)}
+          editing={editingPayment}
+          onClose={() => {
+            setActiveModal(null);
+            setEditingPayment(null);
+          }}
           onSuccess={onPaymentSaved}
         />
       )}
-      {activeModal === "sales-return" && party.id && (
-        <ReturnModal
-          title="Create Sales Return"
-          partyId={party.id}
-          type="sales"
-          onClose={() => setActiveModal(null)}
-          onSuccess={() => {}}
-        />
-      )}
-      {activeModal === "purchase-return" && party.id && (
-        <ReturnModal
-          title="Create Purchase Return"
-          partyId={party.id}
-          type="purchase"
-          onClose={() => setActiveModal(null)}
-          onSuccess={() => {}}
-        />
-      )}
-
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b border-[#f0f0f0] flex-shrink-0">
         <div className="w-[56px] h-[56px] rounded-xl bg-[#29ad82] text-white flex items-center justify-center text-[19px] font-bold flex-shrink-0">
@@ -1027,16 +914,26 @@ function PartyDetail({
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-[#f0f0f0]">
-                {["Type", "Date", "Total", "Status", "Balance", "Remarks"].map(
-                  (h) => (
-                    <th
-                      key={h}
-                      className="text-left py-2.5 px-4 text-[12px] text-gray-400 font-medium"
-                    >
-                      {h}
-                    </th>
-                  ),
-                )}
+                {[
+                  { label: "Type" },
+                  { label: "Date" },
+                  { label: "Total" },
+                  { label: "Status" },
+                  {
+                    label: "Balance Due",
+                    tooltip:
+                      "Outstanding amount for this transaction only — not the party's overall running balance.",
+                  },
+                  { label: "Remarks" },
+                ].map(({ label, tooltip }) => (
+                  <th
+                    key={label}
+                    title={tooltip}
+                    className="text-left py-2.5 px-4 text-[12px] text-gray-400 font-medium"
+                  >
+                    {label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -1065,11 +962,30 @@ const PAYMENT_OPTIONS: PaymentFilter[] = [
 ];
 
 export function PartiesPage() {
+  const searchParams = useSearchParams();
   const { parties, addParty, deleteParty, updateParty } = useParties();
   const { invoices } = useSales();
   const { bills } = usePurchase();
   const { paymentsIn, paymentsOut, refresh: refreshPayments } = usePayments();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [salesReturns, setSalesReturns] = useState<SalesReturnApiResponse[]>([]);
+  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturnApiResponse[]>([]);
+  const refreshReturns = async () => {
+    const [sr, pr] = await Promise.allSettled([
+      fetchSalesReturnsApi(),
+      fetchPurchaseReturnsApi(),
+    ]);
+    if (sr.status === "fulfilled") setSalesReturns(sr.value);
+    if (pr.status === "fulfilled") setPurchaseReturns(pr.value);
+  };
+  useEffect(() => {
+    void refreshReturns();
+  }, []);
+  // Restore the previously-open party (passed back as ?selected=<id> after
+  // saving a transaction from this party's "Add Transaction" menu) instead
+  // of always landing with nothing selected.
+  const [selected, setSelected] = useState<string | null>(
+    () => searchParams.get("selected"),
+  );
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -1120,34 +1036,26 @@ export function PartiesPage() {
     return { ins, outs };
   }
 
-  function getOutstanding(p: Party): number {
-    const salesTotal = invoices
-      .filter((inv) => inv.party === p.name || (p.id && inv.partyId === p.id))
-      .reduce((sum, inv) => sum + parsePartyAmount(inv.balance), 0);
-    const purchaseTotal = bills
-      .filter((b) => b.supplier === p.name || (p.id && b.supplierId === p.id))
-      .reduce((sum, b) => sum + parsePartyAmount(b.balance), 0);
-    // Recorded payments reduce the outstanding balance.
-    const { ins, outs } = paymentsForParty(p);
-    const paymentsTotal =
-      ins.reduce((s, pi) => s + (pi.receivedAmount || 0), 0) +
-      outs.reduce((s, po) => s + (po.paidAmount || 0), 0);
-    return salesTotal + purchaseTotal - paymentsTotal;
+  function returnsForParty(p: Party) {
+    const sales = salesReturns.filter(
+      (sr) => (p.id && sr.partyId === p.id) || sr.partyName === p.name,
+    );
+    const purchase = purchaseReturns.filter(
+      (pr) => (p.id && pr.partyId === p.id) || pr.partyName === p.name,
+    );
+    return { sales, purchase };
   }
 
   function withComputedAmt(p: Party): Party {
-    // Start from the party's stored opening balance (signed by its direction:
-    // `g` true = "To Receive" → +, false = "To Give" → -), then add the
-    // outstanding amount from their sales invoices / purchase bills.
-    const opening = parsePartyAmount(p.amt);
-    const openingSigned = p.g ? opening : -opening;
-    const net = openingSigned + getOutstanding(p);
-    const abs = Math.abs(net);
-    return {
-      ...p,
-      amt: abs > 0 ? `Rs. ${Math.round(abs).toLocaleString("en-IN")}` : "Rs. 0",
-      g: net >= 0,
-    };
+    const { amt, g } = computePartyRunningBalance(p, {
+      invoices,
+      bills,
+      paymentsIn,
+      paymentsOut,
+      salesReturns,
+      purchaseReturns,
+    });
+    return { ...p, amt, g };
   }
 
   const getAmt = (p: Party) => parsePartyAmount(withComputedAmt(p).amt);
@@ -1172,17 +1080,21 @@ export function PartiesPage() {
       return 0; // Latest: keep insertion order
     });
 
-  const selectedPartyBase = parties.find((p) => p.name === selected) ?? null;
+  const selectedPartyBase =
+    parties.find((p) => (p.id ?? p.name) === selected) ?? null;
   const selectedParty = selectedPartyBase
     ? {
         ...withComputedAmt(selectedPartyBase),
         txns: [
+          // Opening balance predates every real transaction, so it's pinned
+          // to the epoch to always sort first in FIFO order below.
           ...(parsePartyAmount(selectedPartyBase.amt) > 0
             ? [
                 {
                   kind: "invoice" as const,
                   type: "Opening Balance",
                   date: "Opening",
+                  mdate: new Date(0).toISOString(),
                   total: selectedPartyBase.amt,
                   status: "--",
                   bal: selectedPartyBase.amt,
@@ -1200,10 +1112,11 @@ export function PartiesPage() {
               kind: "invoice" as const,
               type: "Sales Invoice",
               date: inv.date,
+              mdate: inv.createdAt ?? inv.date,
               total: inv.amount,
               status: inv.status,
               bal: inv.balance,
-              rem: inv.balance,
+              rem: inv.notes || "--",
               rcpt: inv.no,
               refId: inv.id,
               creator: inv.creator,
@@ -1218,10 +1131,11 @@ export function PartiesPage() {
               kind: "invoice" as const,
               type: "Purchase Bill",
               date: b.date,
+              mdate: b.createdAt ?? b.date,
               total: b.amount,
               status: b.status,
               bal: b.balance,
-              rem: b.balance,
+              rem: b.notes || "--",
               rcpt: b.no,
               refId: b.id,
               creator: "Admin",
@@ -1230,32 +1144,62 @@ export function PartiesPage() {
             kind: "payment_in" as const,
             type: "Payment In",
             date: fmtPaymentDate(pi.date),
+            mdate: pi.createdAt ?? pi.date,
             total: `Rs. ${Math.round(pi.receivedAmount || 0).toLocaleString("en-IN")}`,
             status: "PAID",
             bal: "--",
             rem: pi.remarks || "--",
             rcpt: pi.receiptNumber,
+            refId: pi.id,
           })),
           ...paymentsForParty(selectedPartyBase).outs.map((po) => ({
             kind: "payment_out" as const,
             type: "Payment Out",
             date: fmtPaymentDate(po.date),
+            mdate: po.createdAt ?? po.date,
             total: `Rs. ${Math.round(po.paidAmount || 0).toLocaleString("en-IN")}`,
             status: "PAID",
             bal: "--",
             rem: po.remarks || "--",
             rcpt: po.receiptNumber,
+            refId: po.id,
           })),
-        ].sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-        ),
+          ...returnsForParty(selectedPartyBase).sales.map((sr) => ({
+            kind: "sales_return" as const,
+            type: "Sales Return",
+            date: fmtPaymentDate(sr.returnDate),
+            mdate: sr.createdAt ?? sr.returnDate,
+            total: `Rs. ${Math.round(sr.totalAmount || 0).toLocaleString("en-IN")}`,
+            status: "PAID",
+            bal: "--",
+            rem: sr.notes || "--",
+            rcpt: sr.returnNumber,
+          })),
+          ...returnsForParty(selectedPartyBase).purchase.map((pr) => ({
+            kind: "purchase_return" as const,
+            type: "Purchase Return",
+            date: fmtPaymentDate(pr.returnDate),
+            mdate: pr.createdAt ?? pr.returnDate,
+            total: `Rs. ${Math.round(pr.totalAmount || 0).toLocaleString("en-IN")}`,
+            status: "PAID",
+            bal: "--",
+            rem: pr.notes || "--",
+            rcpt: pr.returnNumber,
+          })),
+        ]
+          // Newest transaction first — using each entry's real creation
+          // timestamp (mdate) rather than the display date, so same-day
+          // entries still order correctly by actual creation time.
+          .sort(
+            (a, b) => new Date(b.mdate).getTime() - new Date(a.mdate).getTime(),
+          ),
       }
     : null;
 
   function handleAddParty(party: Party) {
     void addParty(party);
     setSearch("");
-    setSelected(party.name);
+    setSelected(party.id ?? party.name);
   }
 
   function handleEditParty(party: Party) {
@@ -1266,7 +1210,7 @@ export function PartiesPage() {
   function handleUpdateParty(updated: Party) {
     if (!editingParty) return;
     updateParty(editingParty.id!, updated);
-    setSelected(updated.name);
+    setSelected(editingParty.id ?? updated.name);
     setEditingParty(null);
   }
 
@@ -1405,11 +1349,11 @@ export function PartiesPage() {
           {filtered.map((p) => {
             const p2 = withComputedAmt(p);
             const st = partyStatus(p2);
-            const isSelected = selected === p.name;
+            const isSelected = selected === (p.id ?? p.name);
             return (
               <div
-                key={p.name}
-                onClick={() => setSelected(p.name)}
+                key={p.id ?? p.name}
+                onClick={() => setSelected(p.id ?? p.name)}
                 className={`flex items-center gap-3.5 px-4 py-3.5 border-b border-[#f5f5f5] cursor-pointer transition-colors relative ${isSelected ? "bg-[#edfaf4]" : "hover:bg-[#fafafa]"}`}
               >
                 {/* Selected left border accent */}
@@ -1469,6 +1413,8 @@ export function PartiesPage() {
         ) : (
           <PartyDetail
             party={selectedParty}
+            paymentsIn={paymentsIn}
+            paymentsOut={paymentsOut}
             onDelete={deleteParty}
             onEdit={handleEditParty}
             onPaymentSaved={() => void refreshPayments()}

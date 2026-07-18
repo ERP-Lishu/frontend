@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, Search, ChevronDown, MoreHorizontal } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 
 interface Column { key: string; label: string }
@@ -11,16 +12,21 @@ interface SimpleListPageProps {
   columns: Column[];
   rows: Row[];
   actionLabel?: string;
+  actionHref?: string;
 }
 
-export function SimpleListPage({ title, columns, rows, actionLabel = "Create" }: SimpleListPageProps) {
+export function SimpleListPage({ title, columns, rows, actionLabel = "Create", actionHref }: SimpleListPageProps) {
+  const router = useRouter();
   return (
     <div className="flex flex-col h-full bg-white">
       <div className="flex items-center justify-between px-6 py-4 border-b border-[#efefef]">
         <h1 className="text-[18px] font-bold text-[#1a1a1a]">{title}</h1>
         <div className="flex items-center gap-2.5">
           <button className="text-[12.5px] border border-[#e0e0e0] rounded-lg px-3 py-1.5 hover:bg-gray-50">Export</button>
-          <button className="flex items-center gap-1.5 text-[12.5px] bg-[#29ad82] text-white rounded-lg px-3 py-1.5 hover:bg-[#1d9470] transition-colors">
+          <button
+            onClick={() => actionHref && router.push(actionHref)}
+            className="flex items-center gap-1.5 text-[12.5px] bg-[#29ad82] text-white rounded-lg px-3 py-1.5 hover:bg-[#1d9470] transition-colors"
+          >
             <Plus size={13} /> {actionLabel}
           </button>
         </div>

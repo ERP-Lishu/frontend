@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { PartiesProvider } from "@/context/PartiesContext";
 import { SalesProvider } from "@/context/SalesContext";
 import { PurchaseProvider } from "@/context/PurchaseContext";
@@ -10,7 +11,9 @@ export default function Page() {
       <SalesProvider>
         <PurchaseProvider>
           <PaymentsProvider>
-            <PartiesPage />
+            <Suspense>
+              <PartiesPage />
+            </Suspense>
           </PaymentsProvider>
         </PurchaseProvider>
       </SalesProvider>

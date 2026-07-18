@@ -78,6 +78,7 @@ export function apiInvoiceToLocal(api: SalesInvoiceApiResponse): FullInvoice {
     rows: rows.length > 0 ? rows : [{ id: 1, name: "", qty: "1", rate: String(amount), discPct: "", discAmt: "" }],
     notes: api.notes ?? "",
     attachImages: api.imageUrl ? [api.imageUrl] : [],
+    createdAt: api.createdAt,
   };
 }
 

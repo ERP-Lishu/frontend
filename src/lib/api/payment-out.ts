@@ -70,3 +70,15 @@ export async function createPaymentOutApi(payload: CreatePaymentOutPayload): Pro
   if (!res.ok) throw new Error(`Failed to create payment-out (${res.status})`);
   return res.json();
 }
+
+export type UpdatePaymentOutPayload = Partial<CreatePaymentOutPayload>;
+
+export async function updatePaymentOutApi(id: string, payload: UpdatePaymentOutPayload): Promise<PaymentOutApiResponse> {
+  const res = await fetch(`${BASE}/payment-out/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Failed to update payment-out (${res.status})`);
+  return res.json();
+}

@@ -2,28 +2,38 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import {
-  ArrowLeft, Settings, Trash2, Plus, Camera, ChevronDown,
-  Calendar, Search, X, Link2,
+  ArrowLeft, Trash2, Plus, Camera, ChevronDown, Calendar, Search,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
 import { useParties } from "@/context/PartiesContext";
 import { useInventory } from "@/context/InventoryContext";
-import { useSales, type InvoiceRow } from "@/context/SalesContext";
-import type { FullInvoice } from "@/context/SalesContext";
+import { useSales } from "@/context/SalesContext";
 import { usePurchase } from "@/context/PurchaseContext";
 import { usePayments } from "@/context/PaymentsContext";
-import { fetchSalesReturnsApi, type SalesReturnApiResponse } from "@/lib/api/sales-return";
-import { fetchPurchaseReturnsApi, type PurchaseReturnApiResponse } from "@/lib/api/purchase-return";
+import {
+  fetchSalesReturnsApi,
+  createSalesReturnApi,
+  type SalesReturnApiResponse,
+} from "@/lib/api/sales-return";
+import {
+  fetchPurchaseReturnsApi,
+  createPurchaseReturnApi,
+  type PurchaseReturnApiResponse,
+} from "@/lib/api/purchase-return";
 import { computePartyRunningBalance } from "@/lib/partyBalance";
-import { PARTIES_KEY } from "@/lib/hooks/usePartiesQuery";
 import { AddPartyModal } from "@/components/parties/AddPartyModal";
 import type { Party } from "@/lib/types";
 
-type LineItem = InvoiceRow;
+interface ReturnRow {
+  id: number;
+  name: string;
+  qty: string;
+  rate: string;
+  discPct: string;
+  discAmt: string;
+}
 
-
-function calcRow(row: LineItem) {
+function calcRow(row: ReturnRow) {
   const qty = parseFloat(row.qty) || 0;
   const rate = parseFloat(row.rate) || 0;
   const discPct = parseFloat(row.discPct) || 0;
@@ -32,80 +42,77 @@ function calcRow(row: LineItem) {
   return Math.max(0, gross - disc);
 }
 
-const TAX_OPTIONS = ["VAT 13%", "VAT 5%", "No Tax"];
+const PAYMENT_METHODS = ["Cash", "Cheque", "Bank Transfer", "Credit Card"];
 let nextId = 100;
 
-export function CreateInvoicePage() {
+export function CreateReturnPage({ type }: { type: "sales" | "purchase" }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const editId = searchParams.get("edit");
   const preselectedPartyId = searchParams.get("partyId");
-  const isEdit = !!editId;
 
-  const queryClient = useQueryClient();
   const { parties, addParty } = useParties();
-  const { items: inventoryItems, updateItem: updateInventoryItem } = useInventory();
-  const { invoices, addInvoice, updateInvoice, deleteInvoice } = useSales();
+  const { items: inventoryItems } = useInventory();
+  const { invoices } = useSales();
   const { bills } = usePurchase();
   const { paymentsIn, paymentsOut } = usePayments();
   const [salesReturns, setSalesReturns] = useState<SalesReturnApiResponse[]>([]);
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturnApiResponse[]>([]);
 
-  // Force a fresh party list (bypassing the query cache) and fresh returns data
-  // every time the invoice form is opened, so the balance shown next to
-  // "Select Party" reflects transactions recorded elsewhere.
+  const seqKey = type === "sales" ? "gf_sales_return_seq" : "gf_purchase_return_seq";
+  const label = type === "sales" ? "Sales Return" : "Purchase Return";
+  // Tracks whether the Return No field is still auto-generated (vs. hand-edited by
+  // the user), so the auto-suggested number keeps refreshing until they touch it.
+  const returnNoAutoRef = useRef(true);
+
+  const [party, setParty] = useState("");
+  const [returnNo, setReturnNo] = useState(() => {
+    const next = parseInt(localStorage.getItem(seqKey) || "0", 10) + 1;
+    return String(next);
+  });
+
+  // returnNumber is unique in the database, but the field above only guesses from a
+  // per-browser counter. Once the real list of existing returns loads, bump the
+  // suggestion past the highest number actually in use so it can't collide —
+  // otherwise saving fails with a generic "Failed to save" (a duplicate-key error).
   useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey: PARTIES_KEY });
     Promise.allSettled([fetchSalesReturnsApi(), fetchPurchaseReturnsApi()]).then(
       ([sr, pr]) => {
         if (sr.status === "fulfilled") setSalesReturns(sr.value);
         if (pr.status === "fulfilled") setPurchaseReturns(pr.value);
+
+        const relevant = type === "sales" ? sr : pr;
+        if (relevant.status !== "fulfilled" || !returnNoAutoRef.current) return;
+        const maxExisting = relevant.value.reduce((max, r) => {
+          const n = parseInt(r.returnNumber, 10);
+          return Number.isFinite(n) && n > max ? n : max;
+        }, 0);
+        const stored = parseInt(localStorage.getItem(seqKey) || "0", 10);
+        const next = Math.max(maxExisting, stored) + 1;
+        localStorage.setItem(seqKey, String(next));
+        setReturnNo(String(next));
       },
     );
-  }, [queryClient]);
-
-  // Core fields
-  const [party, setParty] = useState("");
-  const [invoiceNo, setInvoiceNo] = useState(() => {
-    if (isEdit) return "";
-    const next = (parseInt(localStorage.getItem("gf_invoice_seq") || "10000079", 10) + 1);
-    localStorage.setItem("gf_invoice_seq", String(next));
-    return `#${next}`;
-  });
-  const [invoiceDate, setInvoiceDate] = useState(() => {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [returnDate, setReturnDate] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()} ${d.toLocaleString("en", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`;
   });
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [notes, setNotes] = useState("");
   const [attachImages, setAttachImages] = useState<string[]>([]);
-  const [rows, setRows] = useState<LineItem[]>([
+  const [rows, setRows] = useState<ReturnRow[]>([
     { id: 1, name: "", qty: "", rate: "", discPct: "", discAmt: "" },
   ]);
 
-  // Discount
-  const [showDiscount, setShowDiscount] = useState(false);
-  const [discPct, setDiscPct] = useState("");
-  const [discAmt, setDiscAmt] = useState("");
-
-  // Tax
-  const [showTax, setShowTax] = useState(false);
-  const [taxType, setTaxType] = useState("VAT 13%");
-
-
-  // Received amount
-  const [receivedEnabled, setReceivedEnabled] = useState(false);
-  const [receivedAmt, setReceivedAmt] = useState("");
-
-  // UI state
   const [partyError, setPartyError] = useState(false);
-  const [stockErrors, setStockErrors] = useState<Record<number, string>>({});
+  const [itemsError, setItemsError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [partyOpen, setPartyOpen] = useState(false);
   const [partySearch, setPartySearch] = useState("");
   const [addPartyOpen, setAddPartyOpen] = useState(false);
   const [itemSuggestRowId, setItemSuggestRowId] = useState<number | null>(null);
   const [itemDropdownPos, setItemDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const partyDropRef = useRef<HTMLDivElement>(null);
   const partySearchRef = useRef<HTMLInputElement>(null);
@@ -113,30 +120,12 @@ export function CreateInvoicePage() {
   const dateRef = useRef<HTMLInputElement>(null);
   const itemInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
-  // Pre-fill party from partyId query param
   useEffect(() => {
-    if (isEdit || !preselectedPartyId || parties.length === 0) return;
+    if (!preselectedPartyId || parties.length === 0) return;
     const matched = parties.find((p) => p.id === preselectedPartyId);
     if (matched) setParty(matched.name);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselectedPartyId, parties.length]);
-
-  // Pre-fill when editing
-  useEffect(() => {
-    if (!editId) return;
-    const inv = invoices.find((x) => x.id === editId);
-    if (!inv) return;
-    setParty(inv.party);
-    setInvoiceNo(inv.no);
-    setInvoiceDate(inv.date);
-    setPaymentMode(inv.mode);
-    setNotes(inv.notes);
-    setAttachImages(inv.attachImages);
-    setRows(inv.rows.length > 0 ? inv.rows : [{ id: nextId++, name: "", qty: "", rate: "", discPct: "", discAmt: "" }]);
-    const recNum = Math.round(parseFloat(inv.received.replace(/[^0-9.]/g, "")) || 0);
-    if (recNum > 0) { setReceivedEnabled(true); setReceivedAmt(String(recNum)); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editId, invoices.length]);
 
   useEffect(() => {
     function out(e: MouseEvent) {
@@ -148,33 +137,16 @@ export function CreateInvoicePage() {
     return () => document.removeEventListener("mousedown", out);
   }, []);
 
-  // Calculations
   const subTotal = rows.reduce((s, r) => s + calcRow(r), 0);
+  const totalAmount = subTotal;
 
-  // Discount: if % entered → compute Rs. amount; if Rs. entered directly use that.
-  // Only applied when the discount row has actually been added.
-  const discountRs = showDiscount
-    ? discPct
-      ? (subTotal * (parseFloat(discPct) || 0)) / 100
-      : parseFloat(discAmt) || 0
-    : 0;
-
-  // Tax: only applied when the tax row has actually been added.
-  const taxRate = taxType === "VAT 13%" ? 0.13 : taxType === "VAT 5%" ? 0.05 : 0;
-  const taxAmt = showTax ? (subTotal - discountRs) * taxRate : 0;
-
-  const totalAmount = subTotal - discountRs + taxAmt;
-  const receivedNum = receivedEnabled ? (parseFloat(receivedAmt) || 0) : 0;
-  const balanceDue = totalAmount - receivedNum;
-
-  // Row helpers
   function addRow() {
     setRows((r) => [...r, { id: nextId++, name: "", qty: "", rate: "", discPct: "", discAmt: "" }]);
   }
   function removeRow(id: number) {
     setRows((r) => (r.length > 1 ? r.filter((row) => row.id !== id) : r));
   }
-  function updateRow(id: number, field: keyof LineItem, value: string) {
+  function updateRow(id: number, field: keyof ReturnRow, value: string) {
     setRows((r) => r.map((row) => {
       if (row.id !== id) return row;
       const updated = { ...row, [field]: value };
@@ -184,109 +156,6 @@ export function CreateInvoicePage() {
     }));
   }
 
-
-  function buildInvoice(id?: string): FullInvoice {
-    const status: FullInvoice["status"] =
-      balanceDue <= 0 ? "PAID" : receivedNum > 0 ? "PARTIAL" : "UNPAID";
-    const matchedParty = parties.find((p) => p.name === party);
-    return {
-      id: id ?? Date.now().toString(),
-      no: invoiceNo,
-      party,
-      partyId: matchedParty?.id,
-      date: invoiceDate,
-      due: invoiceDate,
-      amount: `Rs. ${totalAmount > 0 ? Math.round(totalAmount).toLocaleString("en-US") : "0"}`,
-      received: `Rs. ${receivedNum > 0 ? Math.round(receivedNum).toLocaleString("en-US") : "0"}`,
-      balance: `Rs. ${balanceDue > 0 ? Math.round(balanceDue).toLocaleString("en-US") : "0"}`,
-      status,
-      mode: paymentMode,
-      creator: "Admin",
-      rows,
-      notes,
-      attachImages,
-    };
-  }
-
-  function pushPartyTransaction(inv: ReturnType<typeof buildInvoice>) {
-    // Skip Cash Sale — no party record to update
-    if (inv.party === "Cash Sale") return;
-    const matched = parties.find((p) => p.name === inv.party);
-    if (!matched) return;
-
-    const newTxn = {
-      kind: "invoice" as const,
-      type: "Sales Invoice",
-      date: inv.date,
-      total: inv.amount,
-      status: inv.status,
-      bal: inv.balance,
-      rem: inv.balance,
-      rcpt: inv.no,
-      creator: inv.creator,
-    };
-
-    // Party balance and txns are derived from invoices context in PartiesPage;
-    // no need to mutate party.amt or txns here.
-  }
-
-  function validateStock(): boolean {
-    const errors: Record<number, string> = {};
-
-    for (const row of rows) {
-      if (!row.name || !row.qty) continue;
-      const requestedQty = parseFloat(row.qty) || 0;
-      if (requestedQty <= 0) continue;
-
-      const inventoryItem = inventoryItems.find(
-        (it) => it.name.toLowerCase() === row.name.toLowerCase()
-      );
-      if (!inventoryItem) continue;
-
-      // inventoryItem.qty is already the current stock after all past deductions.
-      // When editing, add back the qty this invoice previously committed so we don't under-count.
-      const prevQtyForItem = editId
-        ? (invoices.find((inv) => inv.id === editId)?.rows ?? [])
-            .filter((r) => r.name.toLowerCase() === row.name.toLowerCase())
-            .reduce((sum, r) => sum + (parseFloat(r.qty) || 0), 0)
-        : 0;
-
-      const availableQty = inventoryItem.qty + prevQtyForItem;
-
-      if (requestedQty > availableQty) {
-        errors[row.id] = `Only ${availableQty} PCS available`;
-      }
-    }
-
-    setStockErrors(errors);
-    return Object.keys(errors).length === 0;
-  }
-
-  function deductStock(inv: ReturnType<typeof buildInvoice>, previousRows?: LineItem[]) {
-    for (const row of inv.rows) {
-      if (!row.name || !row.qty) continue;
-      const soldQty = parseFloat(row.qty) || 0;
-      if (soldQty <= 0) continue;
-      const inventoryItem = inventoryItems.find(
-        (it) => it.name.toLowerCase() === row.name.toLowerCase()
-      );
-      if (!inventoryItem || !inventoryItem.id) continue;
-
-      // When editing, restore previous qty for this item before deducting new qty
-      const prevQty = previousRows
-        ? previousRows
-            .filter((r) => r.name.toLowerCase() === row.name.toLowerCase())
-            .reduce((s, r) => s + (parseFloat(r.qty) || 0), 0)
-        : 0;
-
-      const newQty = Math.max(0, inventoryItem.qty + prevQty - soldQty);
-      updateInventoryItem(inventoryItem.id, { ...inventoryItem, qty: newQty });
-    }
-  }
-
-  // If this form was opened from a party's "Add Transaction" menu (or from
-  // editing a transaction inside a party's detail view), navigate back to
-  // that same party's detail view instead of the generic parties list.
   async function handleCreateParty(newParty: Party) {
     await addParty(newParty);
     setParty(newParty.name);
@@ -304,45 +173,67 @@ export function CreateInvoicePage() {
     }
   }
 
+  function resetForm(lastReturnNo: string) {
+    setParty("");
+    const lastNum = parseInt(lastReturnNo, 10) || 0;
+    const stored = parseInt(localStorage.getItem(seqKey) || "0", 10);
+    const next = Math.max(lastNum, stored) + 1;
+    localStorage.setItem(seqKey, String(next));
+    returnNoAutoRef.current = true;
+    setReturnNo(String(next));
+    setRows([{ id: nextId++, name: "", qty: "", rate: "", discPct: "", discAmt: "" }]);
+    setNotes("");
+    setAttachImages([]);
+    setPartyError(false);
+    setItemsError("");
+  }
+
   async function handleSave(saveAndNew = false) {
     if (!party) { setPartyError(true); return; }
-    if (!validateStock()) return;
-    if (isEdit && editId) {
-      const prevInv = invoices.find((x) => x.id === editId);
-      const inv = buildInvoice(editId);
-      // Await the backend write before navigating so the party detail view
-      // (which re-fetches on mount) picks up the change immediately instead
-      // of racing the still-in-flight save.
-      await updateInvoice(inv);
-      pushPartyTransaction(inv);
-      deductStock(inv, prevInv?.rows);
-      returnToParties();
-    } else {
-      const inv = buildInvoice();
-      await addInvoice(inv);
-      pushPartyTransaction(inv);
-      deductStock(inv);
+    const validRows = rows.filter((r) => r.name.trim());
+    if (validRows.length === 0) { setItemsError("Add at least one item"); return; }
+    setItemsError("");
+
+    const matchedParty = parties.find((p) => p.name === party);
+    const payload = {
+      partyId: matchedParty?.id,
+      returnNumber: returnNo,
+      returnDate: new Date().toISOString(),
+      notes: notes || undefined,
+      paymentMode: paymentMode.toUpperCase().replace(/ /g, "_"),
+      subTotal,
+      totalAmount,
+      imageUrl: attachImages[0],
+      items: validRows.map((r) => ({
+        itemName: r.name.trim(),
+        quantity: parseFloat(r.qty) || 0,
+        rate: parseFloat(r.rate) || 0,
+        discountPercent: parseFloat(r.discPct) || 0,
+        discount: parseFloat(r.discAmt) || 0,
+        amount: calcRow(r),
+      })),
+    };
+
+    setSaving(true);
+    try {
+      if (type === "sales") {
+        await createSalesReturnApi(payload);
+      } else {
+        await createPurchaseReturnApi(payload);
+      }
       if (saveAndNew) {
-        setParty(""); setRows([{ id: nextId++, name: "", qty: "", rate: "", discPct: "", discAmt: "" }]);
-        setNotes(""); setAttachImages([]); setPartyError(false); setStockErrors({});
-        setShowDiscount(false); setShowTax(false);
-        setDiscPct(""); setDiscAmt(""); setReceivedEnabled(false); setReceivedAmt("");
+        resetForm(returnNo);
       } else {
         returnToParties();
       }
+    } catch {
+      setItemsError("Failed to save. Return No may already be in use — try a different number.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  function handleDelete() {
-    if (editId) { deleteInvoice(editId); router.back(); }
-  }
-
   const selectedParty = parties.find((p) => p.name === party);
-
-  // Recompute the party's current running balance (opening balance + all
-  // outstanding invoices/bills, minus payments/returns) whenever the
-  // selected party or any underlying transaction data changes, instead of
-  // showing the party's stale stored opening balance.
   const selectedPartyBalance = useMemo(() => {
     if (!selectedParty) return null;
     return computePartyRunningBalance(selectedParty, {
@@ -363,22 +254,19 @@ export function CreateInvoicePage() {
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#f0f0f0] flex-shrink-0">
         <button onClick={() => router.back()} className="flex items-center gap-2 text-[15px] font-bold text-[#1a1a1a] hover:opacity-70 transition-opacity">
           <ArrowLeft size={17} />
-          {isEdit ? "Edit Sales Invoice" : "Create Sales Invoice"}
-        </button>
-        <button className="w-8 h-8 rounded-full border border-[#e5e5e5] flex items-center justify-center text-gray-400 hover:bg-gray-50">
-          <Settings size={15} />
+          Create {label}
         </button>
       </div>
 
-      {/* ── Body ── */}
+      {/* Body */}
       <div className="flex-1 overflow-y-auto">
         <div className="w-full px-4 py-4 space-y-3">
 
-          {/* Party + Invoice meta */}
+          {/* Party + Return meta */}
           <div className="bg-white border border-[#efefef] rounded-xl px-4 py-4">
             <div className="grid grid-cols-2 gap-5">
               {/* Select Party */}
@@ -416,10 +304,6 @@ export function CreateInvoicePage() {
                         <input ref={partySearchRef} className="flex-1 text-[13px] outline-none placeholder:text-gray-400 bg-transparent" placeholder="Search for party" value={partySearch} onChange={(e) => setPartySearch(e.target.value)} />
                       </div>
                       <div className="max-h-[240px] overflow-y-auto py-1">
-                        <button onClick={() => { setParty("Cash Sale"); setPartyOpen(false); setPartySearch(""); setPartyError(false); }} className="flex items-center gap-3 w-full px-3.5 py-2.5 hover:bg-gray-50 transition-colors">
-                          <div className="w-8 h-8 rounded-lg bg-[#29ad82] flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0">CS</div>
-                          <span className="text-[13px] font-medium text-[#1a1a1a]">Cash Sale</span>
-                        </button>
                         {filteredParties.map((p) => (
                           <button key={p.name} onClick={() => { setParty(p.name); setPartyOpen(false); setPartySearch(""); setPartyError(false); }}
                             className={`flex items-center justify-between w-full px-3.5 py-2.5 hover:bg-gray-50 transition-colors ${party === p.name ? "bg-[#edfaf4]" : ""}`}>
@@ -445,21 +329,21 @@ export function CreateInvoicePage() {
                 {partyError && <span className="text-red-500 text-[11.5px] mt-1.5 block">Please select a party to continue</span>}
               </div>
 
-              {/* Invoice No + Date */}
+              {/* Return No + Date */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <label className="text-[12.5px] text-gray-500 font-medium">Invoice No</label>
+                    <label className="text-[12.5px] text-gray-500 font-medium">Return No</label>
                     <span className="text-[11.5px] text-[#29ad82] font-medium cursor-pointer hover:underline">Manual</span>
                   </div>
-                  <input className="w-full border border-[#e5e5e5] rounded-xl px-3.5 py-2.5 text-[13px] outline-none focus:border-[#29ad82] bg-white text-[#1a1a1a]" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+                  <input className="w-full border border-[#e5e5e5] rounded-xl px-3.5 py-2.5 text-[13px] outline-none focus:border-[#29ad82] bg-white text-[#1a1a1a]" value={returnNo} onChange={(e) => { returnNoAutoRef.current = false; setReturnNo(e.target.value); }} />
                 </div>
                 <div>
-                  <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">Invoice Date</label>
+                  <label className="text-[12.5px] text-gray-500 font-medium block mb-1.5">Return Date</label>
                   <div className="relative">
-                    <input className="w-full border border-[#e5e5e5] rounded-xl px-3.5 py-2.5 text-[13px] outline-none focus:border-[#29ad82] bg-white text-[#1a1a1a] pr-10" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+                    <input className="w-full border border-[#e5e5e5] rounded-xl px-3.5 py-2.5 text-[13px] outline-none focus:border-[#29ad82] bg-white text-[#1a1a1a] pr-10" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
                     <input ref={dateRef} type="date" className="absolute inset-0 opacity-0 w-full cursor-pointer"
-                      onChange={(e) => { if (!e.target.value) return; const d = new Date(e.target.value); setInvoiceDate(`${d.getFullYear()} ${d.toLocaleString("en", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`); }} />
+                      onChange={(e) => { if (!e.target.value) return; const d = new Date(e.target.value); setReturnDate(`${d.getFullYear()} ${d.toLocaleString("en", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`); }} />
                     <Calendar size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                   </div>
                 </div>
@@ -467,7 +351,7 @@ export function CreateInvoicePage() {
             </div>
           </div>
 
-          {/* ── Line items table ── */}
+          {/* Line items table */}
           <div className="bg-white border border-[#efefef] rounded-xl">
             <table className="w-full border-collapse">
               <thead>
@@ -509,25 +393,14 @@ export function CreateInvoicePage() {
                         />
                       </td>
                       <td className="border-l border-[#efefef] align-middle">
-                        <div className="flex flex-col px-3 gap-0.5">
-                          <div className="flex items-center gap-1">
-                            <input
-                              className={`w-10 py-2 text-[13px] outline-none bg-transparent placeholder:text-gray-300 ${stockErrors[row.id] ? "text-red-500" : ""}`}
-                              placeholder="0"
-                              type="number"
-                              value={row.qty}
-                              onChange={(e) => {
-                                updateRow(row.id, "qty", e.target.value);
-                                setStockErrors((prev) => { const n = { ...prev }; delete n[row.id]; return n; });
-                              }}
-                            />
-                            <div className="flex items-center gap-0.5 text-[12px] text-gray-400 border border-[#e5e5e5] rounded px-1.5 py-0.5 cursor-pointer hover:border-gray-400">
-                              PCS <ChevronDown size={10} />
-                            </div>
-                          </div>
-                          {stockErrors[row.id] && (
-                            <span className="text-[11px] text-red-500 leading-tight pb-1">{stockErrors[row.id]}</span>
-                          )}
+                        <div className="flex items-center gap-1 px-3">
+                          <input
+                            className="w-full py-2 text-[13px] outline-none bg-transparent placeholder:text-gray-300"
+                            placeholder="0"
+                            type="number"
+                            value={row.qty}
+                            onChange={(e) => updateRow(row.id, "qty", e.target.value)}
+                          />
                         </div>
                       </td>
                       <td className="border-l border-[#efefef] align-middle">
@@ -578,14 +451,12 @@ export function CreateInvoicePage() {
               </div>
             </div>
           </div>
+          {itemsError && <p className="text-[12px] text-red-500 px-1">{itemsError}</p>}
 
-          {/* ── Notes + Images (left) · Adjustments + Totals (right) ── */}
+          {/* Notes + Images (left) · Total + Payment Mode (right) */}
           <div className="grid grid-cols-2 gap-3 items-start">
-
-            {/* ── BOX 3: Notes + Attach Images ── */}
             <div className="flex flex-col gap-3">
-              {/* Notes section */}
-              <div className="p-0">
+              <div>
                 <label className="text-[12.5px] text-gray-500 font-medium block mb-2">Notes or Remarks</label>
                 <textarea
                   className="w-full border border-[#e5e5e5] rounded-xl px-3.5 py-2 text-[13px] bg-white outline-none focus:border-[#29ad82] resize-none h-14 placeholder:text-gray-300"
@@ -595,8 +466,7 @@ export function CreateInvoicePage() {
                 />
               </div>
 
-              {/* Attach Images section */}
-              <div className="p-0">
+              <div>
                 <label className="text-[12.5px] text-gray-500 font-medium block mb-3">Attach Images</label>
                 <input ref={imgRef} type="file" accept="image/*" multiple className="hidden"
                   onChange={(e) => {
@@ -624,70 +494,7 @@ export function CreateInvoicePage() {
               </div>
             </div>
 
-            {/* ── BOX 4: Discount / Tax + Totals ── */}
             <div className="bg-white rounded-xl overflow-hidden">
-
-              {/* Discount row */}
-              {showDiscount && (
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-[#f5f5f5]">
-                  <span className="text-[13px] text-gray-600 font-medium w-20 flex-shrink-0">Discount</span>
-                  <div className="flex items-center gap-1 border border-[#e5e5e5] rounded-lg px-2 py-1.5 flex-1">
-                    <input type="number" className="w-full text-[13px] outline-none bg-transparent placeholder:text-gray-300" placeholder="0"
-                      value={discPct}
-                      onChange={(e) => { setDiscPct(e.target.value); if (e.target.value) setDiscAmt(""); }}
-                    />
-                    <span className="text-[12px] text-gray-400 flex-shrink-0">%</span>
-                  </div>
-                  <button className="text-gray-300 hover:text-[#29ad82] transition-colors flex-shrink-0"><Link2 size={14} /></button>
-                  <div className="flex items-center gap-1 border border-[#e5e5e5] rounded-lg px-2 py-1.5 flex-1">
-                    <span className="text-[12px] text-gray-400 flex-shrink-0">Rs.</span>
-                    <input type="number" className="w-full text-[13px] outline-none bg-transparent placeholder:text-gray-300" placeholder="0"
-                      value={discAmt || (discPct ? Math.round(discountRs).toString() : "")}
-                      readOnly={!!discPct}
-                      onChange={(e) => { if (!discPct) { setDiscAmt(e.target.value); } }}
-                    />
-                  </div>
-                  <button onClick={() => { setShowDiscount(false); setDiscPct(""); setDiscAmt(""); }} className="text-red-400 hover:text-red-500 flex-shrink-0"><Trash2 size={14} /></button>
-                </div>
-              )}
-
-              {/* Tax row */}
-              {showTax && (
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-[#f5f5f5]">
-                  <span className="text-[13px] text-gray-600 font-medium w-20 flex-shrink-0">Tax</span>
-                  <div className="relative flex-1">
-                    <select
-                      value={taxType}
-                      onChange={(e) => setTaxType(e.target.value)}
-                      className="w-full border border-[#e5e5e5] rounded-lg px-2 py-1.5 text-[13px] text-[#1a1a1a] outline-none focus:border-[#29ad82] bg-white appearance-none pr-6"
-                    >
-                      {TAX_OPTIONS.map((t) => <option key={t}>{t}</option>)}
-                    </select>
-                    <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                  </div>
-                  <div className="flex items-center gap-1 border border-[#e5e5e5] rounded-lg px-2 py-1.5 flex-1 bg-[#f7f8fa]">
-                    <span className="text-[12px] text-gray-400 flex-shrink-0">Rs.</span>
-                    <span className="text-[13px] text-[#1a1a1a]">{taxAmt > 0 ? Math.round(taxAmt).toLocaleString("en-US") : "0"}</span>
-                  </div>
-                  <button onClick={() => { setShowTax(false); }} className="text-red-400 hover:text-red-500 flex-shrink-0"><Trash2 size={14} /></button>
-                </div>
-              )}
-
-              {/* Add Discount / Tax buttons */}
-              <div className="flex items-center flex-wrap gap-x-1 gap-y-1 px-4 py-3 border-b border-[#f0f0f0] bg-[#fafafa]">
-                {!showDiscount && (
-                  <button onClick={() => setShowDiscount(true)} className="flex items-center gap-0.5 text-[12px] text-[#29ad82] font-semibold hover:underline px-1.5 py-1">
-                    <Plus size={11} /> Add Discount
-                  </button>
-                )}
-                {!showTax && (
-                  <button onClick={() => setShowTax(true)} className="flex items-center gap-0.5 text-[12px] text-[#29ad82] font-semibold hover:underline px-1.5 py-1">
-                    <Plus size={11} /> Add Tax
-                  </button>
-                )}
-              </div>
-
-              {/* Total Amount */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-[#f0f0f0]">
                 <span className="text-[13px] font-semibold text-[#1a1a1a]">Total Amount</span>
                 <div className="flex items-center gap-1.5 bg-[#f7f8fa] border border-[#e5e5e5] rounded-lg px-3 py-1.5 w-40">
@@ -698,41 +505,6 @@ export function CreateInvoicePage() {
                 </div>
               </div>
 
-              {/* Received Amount */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#f0f0f0]">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={receivedEnabled}
-                    onChange={(e) => { setReceivedEnabled(e.target.checked); if (!e.target.checked) setReceivedAmt(""); }}
-                    className="w-4 h-4 rounded accent-[#29ad82] cursor-pointer"
-                  />
-                  <span className="text-[13px] text-gray-600 font-medium">Received Amount</span>
-                </label>
-                <div className={`flex items-center gap-1 border rounded-lg px-3 py-1.5 w-40 transition-colors ${receivedEnabled ? "border-[#29ad82] bg-white" : "border-[#e5e5e5] bg-[#f7f8fa]"}`}>
-                  <span className="text-[12.5px] text-gray-400">Rs.</span>
-                  <input
-                    type="number"
-                    disabled={!receivedEnabled}
-                    className="flex-1 text-[13px] outline-none bg-transparent placeholder:text-gray-300 disabled:cursor-not-allowed"
-                    placeholder="0"
-                    value={receivedAmt}
-                    onChange={(e) => setReceivedAmt(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* Balance Due (shown when received is enabled) */}
-              {receivedEnabled && (
-                <div className="flex items-center justify-between px-4 py-3 border-b border-[#f0f0f0] bg-[#fafafa]">
-                  <span className="text-[13px] font-semibold text-[#1a1a1a]">Balance Due</span>
-                  <span className="text-[13px] font-bold text-[#1a1a1a] w-40 text-right pr-1">
-                    Rs. {balanceDue > 0 ? Math.round(balanceDue).toLocaleString("en-US") : "0"}
-                  </span>
-                </div>
-              )}
-
-              {/* Payment Mode */}
               <div className="flex items-center justify-between px-4 py-3">
                 <span className="text-[13px] text-gray-600 font-medium">Payment Mode</span>
                 <div className="relative w-40">
@@ -741,7 +513,7 @@ export function CreateInvoicePage() {
                     onChange={(e) => setPaymentMode(e.target.value)}
                     className="w-full border border-[#e5e5e5] rounded-lg px-3 py-1.5 text-[13px] text-[#1a1a1a] outline-none focus:border-[#29ad82] bg-white appearance-none pr-7"
                   >
-                    {["Cash", "Credit", "Bank Transfer", "QR / Wallet"].map((m) => <option key={m}>{m}</option>)}
+                    {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
                   </select>
                   <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                 </div>
@@ -752,7 +524,7 @@ export function CreateInvoicePage() {
         </div>
       </div>
 
-      {/* ── Item suggestion dropdown (fixed, escapes overflow-hidden parents) ── */}
+      {/* Item suggestion dropdown (fixed, escapes overflow-hidden parents) */}
       {itemSuggestRowId !== null && itemDropdownPos && (() => {
         const activeRow = rows.find((r) => r.id === itemSuggestRowId);
         const matches = activeRow && activeRow.name.length > 0
@@ -764,7 +536,6 @@ export function CreateInvoicePage() {
             className="fixed z-[9999] bg-white border border-[#efefef] rounded-xl shadow-2xl overflow-hidden flex flex-col"
             style={{ top: itemDropdownPos.top + 4, left: itemDropdownPos.left, width: itemDropdownPos.width, maxHeight: 260 }}
           >
-            {/* Header */}
             <div className="grid grid-cols-4 px-4 py-2 bg-[#fafafa] border-b border-[#efefef] flex-shrink-0">
               <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Item Name</span>
               <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide text-center">Quantity</span>
@@ -778,10 +549,11 @@ export function CreateInvoicePage() {
                   type="button"
                   className="grid grid-cols-4 w-full px-4 py-2.5 hover:bg-[#f7f7f7] text-left items-center"
                   onMouseDown={() => {
-                    const saleNum = parseInt(it.sale.replace(/[^0-9]/g, "")) || 0;
+                    const priceStr = type === "sales" ? it.sale : it.purchase;
+                    const priceNum = parseInt(priceStr.replace(/[^0-9]/g, "")) || 0;
                     setRows((prev) => prev.map((r) =>
                       r.id === itemSuggestRowId
-                        ? { ...r, name: it.name, rate: String(saleNum) }
+                        ? { ...r, name: it.name, rate: String(priceNum) }
                         : r
                     ));
                     setItemSuggestRowId(null);
@@ -798,68 +570,21 @@ export function CreateInvoicePage() {
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 w-full px-4 py-2.5 text-[12.5px] text-[#29ad82] font-semibold hover:bg-[#edfaf4] border-t border-[#efefef] flex-shrink-0"
-              onMouseDown={() => { setItemSuggestRowId(null); setItemDropdownPos(null); }}
-            >
-              <Plus size={12} /> Add New Item
-            </button>
           </div>
         );
       })()}
 
-      {/* ── Footer ── */}
-      <div className="flex items-center justify-between px-4 py-3 bg-white border-t border-[#f0f0f0] flex-shrink-0">
-        <div>
-          {isEdit && (
-            <button onClick={() => setShowDeleteConfirm(true)} className="text-[13.5px] text-red-500 font-medium border border-red-300 rounded-xl px-5 py-2.5 hover:bg-red-50 transition-colors">
-              Delete
-            </button>
-          )}
-        </div>
+      {/* Footer */}
+      <div className="flex items-center justify-end px-4 py-3 bg-white border-t border-[#f0f0f0] flex-shrink-0">
         <div className="flex items-center gap-3">
-          {!isEdit && (
-            <button onClick={() => handleSave(true)} className="text-[13.5px] text-gray-500 font-medium px-5 py-2.5 border border-[#e5e5e5] rounded-xl hover:bg-gray-50 transition-colors">
-              Save &amp; New
-            </button>
-          )}
-          <div className="flex rounded-xl overflow-hidden">
-            <button onClick={() => handleSave(false)} className="bg-[#29ad82] text-white text-[13.5px] font-semibold px-5 py-2.5 hover:bg-[#1d9470] transition-colors">
-              {isEdit ? "Update Sales Invoice" : "Save Sales Invoice"}
-            </button>
-            {!isEdit && (
-              <>
-                <div className="w-px bg-white/30" />
-                <button className="bg-[#29ad82] text-white px-3 py-2.5 hover:bg-[#1d9470] transition-colors">
-                  <ChevronDown size={15} />
-                </button>
-              </>
-            )}
-          </div>
+          <button onClick={() => handleSave(true)} disabled={saving} className="text-[13.5px] text-gray-500 font-medium px-5 py-2.5 border border-[#e5e5e5] rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-60">
+            Save &amp; New
+          </button>
+          <button onClick={() => handleSave(false)} disabled={saving} className="bg-[#29ad82] text-white text-[13.5px] font-semibold px-5 py-2.5 rounded-xl hover:bg-[#1d9470] transition-colors disabled:opacity-60">
+            {saving ? "Saving…" : `Save ${label}`}
+          </button>
         </div>
       </div>
-
-      {/* Delete confirmation popup */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center" onClick={() => setShowDeleteConfirm(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[360px] p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
-              <h2 className="text-[16px] font-bold text-[#1a1a1a]">Delete Sales Invoice?</h2>
-              <button onClick={() => setShowDeleteConfirm(false)} className="w-7 h-7 border border-[#e5e5e5] rounded-md flex items-center justify-center hover:bg-gray-50 ml-3">
-                <X size={14} className="text-gray-500" />
-              </button>
-            </div>
-            <p className="text-[13px] text-gray-500 leading-relaxed">
-              Are you sure you want to delete this transaction? The transaction cannot be recovered once it has been deleted.
-            </p>
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button onClick={handleDelete} className="text-[13.5px] text-gray-700 font-medium hover:text-red-500 transition-colors px-2">Yes, Delete</button>
-              <button onClick={() => setShowDeleteConfirm(false)} className="text-[13.5px] font-semibold bg-red-500 text-white rounded-xl px-5 py-2 hover:bg-red-600 transition-colors">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <AddPartyModal
         open={addPartyOpen}

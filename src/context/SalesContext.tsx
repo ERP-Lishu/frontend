@@ -14,7 +14,7 @@ export type { InvoiceRow, FullInvoice };
 interface SalesCtx {
   invoices: FullInvoice[];
   addInvoice: (inv: FullInvoice) => Promise<void>;
-  updateInvoice: (inv: FullInvoice) => void;
+  updateInvoice: (inv: FullInvoice) => Promise<void>;
   deleteInvoice: (id: string) => void;
 }
 
@@ -85,16 +85,18 @@ export function SalesProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  function updateInvoice(inv: FullInvoice) {
+  async function updateInvoice(inv: FullInvoice) {
     setInvoices((prev) => {
       const next = prev.map((x) => (x.id === inv.id ? inv : x));
       saveToStorage(next);
       return next;
     });
 
-    updateSalesInvoiceApi(inv.id, inv).catch((err) =>
-      console.error("Failed to update sales invoice in backend:", err)
-    );
+    try {
+      await updateSalesInvoiceApi(inv.id, inv);
+    } catch (err) {
+      console.error("Failed to update sales invoice in backend:", err);
+    }
   }
 
   function deleteInvoice(id: string) {

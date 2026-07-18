@@ -73,6 +73,7 @@ export function apiBillToLocal(api: PurchaseBillApiResponse): FullBill {
     rows: rows.length > 0 ? rows : [{ id: 1, name: "", qty: "1", rate: String(amount), discPct: "", discAmt: "" }],
     notes: api.notes ?? "",
     attachImages: api.imageUrl ? [api.imageUrl] : [],
+    createdAt: api.createdAt,
   };
 }
 

@@ -9,7 +9,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useParties } from "@/context/PartiesContext";
 import { useInventory } from "@/context/InventoryContext";
 import { usePurchase, type FullBill } from "@/context/PurchaseContext";
-import type { BillRow } from "@/lib/types";
+import type { BillRow, Party } from "@/lib/types";
+import { AddPartyModal } from "@/components/parties/AddPartyModal";
 
 type LineItem = BillRow;
 
@@ -32,7 +33,7 @@ export function CreatePurchaseBillPage() {
   const preselectedPartyId = searchParams.get("partyId");
   const isEdit = !!editId;
 
-  const { parties } = useParties();
+  const { parties, addParty } = useParties();
   const { items: inventoryItems } = useInventory();
   const { bills, addBill, updateBill, deleteBill } = usePurchase();
 
@@ -67,6 +68,7 @@ export function CreatePurchaseBillPage() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [itemSuggestRowId, setItemSuggestRowId] = useState<number | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [addPartyOpen, setAddPartyOpen] = useState(false);
 
   const supplierDropRef = useRef<HTMLDivElement>(null);
   const supplierSearchRef = useRef<HTMLInputElement>(null);
@@ -116,6 +118,15 @@ export function CreatePurchaseBillPage() {
   const paidNum = paidEnabled ? (parseFloat(paidAmt) || 0) : 0;
   const balanceDue = totalAmount - paidNum;
 
+  async function handleCreateParty(newParty: Party) {
+    await addParty(newParty);
+    setSupplier(newParty.name);
+    setSupplierError(false);
+    setSupplierOpen(false);
+    setSupplierSearch("");
+    setAddPartyOpen(false);
+  }
+
   function addRow() {
     setRows((r) => [...r, { id: nextId++, name: "", qty: "", rate: "", discPct: "", discAmt: "" }]);
   }
@@ -153,13 +164,27 @@ export function CreatePurchaseBillPage() {
     };
   }
 
-  function handleSave(saveAndNew = false) {
+  // If this form was opened from a party's "Add Transaction" menu (or from
+  // editing a transaction inside a party's detail view), navigate back to
+  // that same party's detail view instead of the generic parties list.
+  function returnToParties() {
+    if (preselectedPartyId) {
+      router.push(`/parties?selected=${preselectedPartyId}`);
+    } else {
+      router.back();
+    }
+  }
+
+  async function handleSave(saveAndNew = false) {
     if (!supplier) { setSupplierError(true); return; }
     if (isEdit && editId) {
-      updateBill(buildBill(editId));
-      router.back();
+      // Await the backend write before navigating so the party detail view
+      // (which re-fetches on mount) picks up the change immediately instead
+      // of racing the still-in-flight save.
+      await updateBill(buildBill(editId));
+      returnToParties();
     } else {
-      addBill(buildBill());
+      await addBill(buildBill());
       if (saveAndNew) {
         setSupplier(""); setBillNo(`#${Date.now()}`);
         setRows([{ id: nextId++, name: "", qty: "", rate: "", discPct: "", discAmt: "" }]);
@@ -167,7 +192,7 @@ export function CreatePurchaseBillPage() {
         setShowDiscount(false); setShowTax(false);
         setDiscPct(""); setDiscAmt(""); setPaidEnabled(false); setPaidAmt("");
       } else {
-        router.back();
+        returnToParties();
       }
     }
   }
@@ -235,6 +260,13 @@ export function CreatePurchaseBillPage() {
                         ))}
                         {filteredSuppliers.length === 0 && <div className="text-center py-6 text-[12.5px] text-gray-400">No suppliers found</div>}
                       </div>
+                      <button
+                        onClick={() => { setAddPartyOpen(true); setSupplierOpen(false); }}
+                        className="flex items-center gap-2 w-full px-3.5 py-2.5 border-t border-[#f0f0f0] text-[13px] font-semibold text-[#29ad82] hover:bg-[#f7fdfb] transition-colors"
+                      >
+                        <Plus size={14} />
+                        Add New Party
+                      </button>
                     </div>
                   )}
                 </div>
@@ -561,6 +593,12 @@ export function CreatePurchaseBillPage() {
           </div>
         </div>
       )}
+
+      <AddPartyModal
+        open={addPartyOpen}
+        onClose={() => setAddPartyOpen(false)}
+        onSave={handleCreateParty}
+      />
     </div>
   );
 }

@@ -16,5 +16,5 @@ export default async function Page() {
     rows = data.map(apiSalesReturnToRow);
   } catch {}
 
-  return <SimpleListPage title="Sales Returns" columns={columns} rows={rows} actionLabel="Create Return" />;
+  return <SimpleListPage title="Sales Returns" columns={columns} rows={rows} actionLabel="Create Return" actionHref="/sales/returns/create" />;
 }

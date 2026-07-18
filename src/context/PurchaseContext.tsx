@@ -14,7 +14,7 @@ export type { FullBill };
 interface PurchaseCtx {
   bills: FullBill[];
   addBill: (bill: FullBill) => Promise<void>;
-  updateBill: (bill: FullBill) => void;
+  updateBill: (bill: FullBill) => Promise<void>;
   deleteBill: (id: string) => void;
 }
 
@@ -85,15 +85,17 @@ export function PurchaseProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  function updateBill(bill: FullBill) {
+  async function updateBill(bill: FullBill) {
     setBills((prev) => {
       const next = prev.map((x) => (x.id === bill.id ? bill : x));
       saveToStorage(next);
       return next;
     });
-    updatePurchaseBillApi(bill.id, bill).catch((err) =>
-      console.error("Failed to update purchase bill in backend:", err)
-    );
+    try {
+      await updatePurchaseBillApi(bill.id, bill);
+    } catch (err) {
+      console.error("Failed to update purchase bill in backend:", err);
+    }
   }
 
   function deleteBill(id: string) {

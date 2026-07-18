@@ -70,3 +70,15 @@ export async function createPaymentInApi(payload: CreatePaymentInPayload): Promi
   if (!res.ok) throw new Error(`Failed to create payment-in (${res.status})`);
   return res.json();
 }
+
+export type UpdatePaymentInPayload = Partial<CreatePaymentInPayload>;
+
+export async function updatePaymentInApi(id: string, payload: UpdatePaymentInPayload): Promise<PaymentInApiResponse> {
+  const res = await fetch(`${BASE}/payment-in/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Failed to update payment-in (${res.status})`);
+  return res.json();
+}

@@ -5,9 +5,9 @@ export interface Transaction {
   status: string;
   bal: string;
   rem: string;
-  kind: "invoice" | "payment_in" | "payment_out";
+  kind: "invoice" | "payment_in" | "payment_out" | "sales_return" | "purchase_return";
   rcpt?: string;
-  refId?: string; // id of the source sales invoice / purchase bill, for navigation
+  refId?: string; // id of the source invoice / bill / payment, for navigation or editing
   mdate?: string;
   amount?: string;
   method?: string;
@@ -134,6 +134,8 @@ export interface FullBill {
   rows: BillRow[];
   notes: string;
   attachImages: string[];
+  /** ISO creation timestamp from the backend, used for precise chronological (FIFO) ordering. */
+  createdAt?: string;
 }
 
 export interface InvoiceRow {
@@ -161,4 +163,6 @@ export interface FullInvoice {
   rows: InvoiceRow[];
   notes: string;
   attachImages: string[];
+  /** ISO creation timestamp from the backend, used for precise chronological (FIFO) ordering. */
+  createdAt?: string;
 }
